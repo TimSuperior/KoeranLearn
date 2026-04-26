@@ -1,0 +1,107 @@
+{
+  "schema_version": "phase_c.v1",
+  "entity": "lessons",
+  "exported_at": "2026-04-24T09:00:00Z",
+  "count": 1,
+  "items": [
+    {
+      "slug": "survival-greetings-01",
+      "module_id": 1,
+      "title": {
+        "ru": "Приветствия",
+        "uz": "Salomlashuv",
+        "en": "Greetings"
+      },
+      "summary": {
+        "ru": "Базовые приветствия для первого дня.",
+        "uz": "Birinchi kun uchun asosiy salomlashuvlar.",
+        "en": "Basic first-day greetings."
+      },
+      "objectives": [
+        "Use 안녕하세요 politely",
+        "Recognize 안녕히 가세요 and 감사합니다"
+      ],
+      "explanation": {
+        "ru": "Урок вводит базовые вежливые приветствия.",
+        "uz": "Dars asosiy muloyim salomlashuvlarni tanishtiradi.",
+        "en": "This lesson introduces core polite greetings."
+      },
+      "transfer_notes": {
+        "ru": [],
+        "uz": [],
+        "en": []
+      },
+      "tags": [
+        "survival",
+        "greetings"
+      ],
+      "difficulty": "A0",
+      "topic": "survival",
+      "grammar_category": "greetings",
+      "politeness_level": "polite_informal",
+      "estimated_minutes": 10,
+      "cover_metadata": {
+        "theme": "mint-card"
+      },
+      "audience_metadata": {
+        "audience": "new_arrivals",
+        "notes": {
+          "ru": "Новички в Корее",
+          "uz": "Koreyaga yangi kelganlar",
+          "en": "New arrivals in Korea"
+        }
+      },
+      "prerequisite_lesson_ids": [],
+      "status": "draft",
+      "access_state": "inherit",
+      "relation_ids": {
+        "related_vocabulary": [
+          1,
+          2
+        ],
+        "related_grammar": [
+          1
+        ],
+        "related_scenarios": [
+          1
+        ]
+      },
+      "blocks": [
+        {
+          "block_type": "explanation",
+          "title": {
+            "ru": "Фокус",
+            "uz": "Fokus",
+            "en": "Focus"
+          },
+          "body": {
+            "ru": "안녕하세요 используется как безопасное вежливое приветствие.",
+            "uz": "안녕하세요 xavfsiz muloyim salomlashuv hisoblanadi.",
+            "en": "안녕하세요 is the safe default polite greeting."
+          },
+          "payload": {},
+          "order_index": 0,
+          "status": "draft"
+        },
+        {
+          "block_type": "scenario_link",
+          "title": {
+            "ru": "Попробуйте диалог",
+            "uz": "Dialogni sinab ko'ring",
+            "en": "Try the dialogue"
+          },
+          "body": {
+            "ru": "Откройте короткий сценарий знакомства.",
+            "uz": "Qisqa tanishuv dialogini oching.",
+            "en": "Open the short introduction scenario."
+          },
+          "payload": {
+            "scenario_id": 1
+          },
+          "order_index": 1,
+          "status": "draft"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "schema_version": "phase_c.v1",
+  "entity": "grammar",
+  "items": [
+    {
+      "slug": "topic-particle-neun-eun",
+      "korean_pattern": "은/는",
+      "title": {
+        "ru": "Тематическая частица",
+        "uz": "Mavzu qo'shimchasi",
+        "en": "Topic particle"
+      },
+      "explanation": {
+        "ru": "Используется, чтобы обозначить тему предложения.",
+        "uz": "Gap mavzusini ko'rsatish uchun ishlatiladi.",
+        "en": "Used to mark the topic of a sentence."
+      },
+      "usage_notes": {
+        "ru": "После гласной используется 는, после согласной 은.",
+        "uz": "Unlidan keyin 는, undoshdan keyin 은 ishlatiladi.",
+        "en": "Use 는 after a vowel and 은 after a consonant."
+      },
+      "transfer_notes": {
+        "ru": [],
+        "uz": [],
+        "en": []
+      },
+      "common_errors": {
+        "ru": [
+          "Путаница с 이/가"
+        ],
+        "uz": [
+          "이/가 bilan aralashtirish"
+        ],
+        "en": [
+          "Confusing it with 이/가"
+        ]
+      },
+      "natural_alternatives": [],
+      "category": "particles",
+      "difficulty": "A0",
+      "politeness_level": "",
+      "tags": [
+        "topic"
+      ],
+      "access_state": "free",
+      "status": "draft",
+      "relation_ids": {
+        "related_lessons": [
+          1
+        ],
+        "related_scenarios": [
+          1
+        ]
+      }
+    }
+  ]
+}

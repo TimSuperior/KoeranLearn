@@ -1,0 +1,16 @@
+.env
+.venv/
+.deps/
+.tmp/
+__pycache__/
+*.pyc
+*.db
+.pytest_cache/
+node_modules/
+dist/
+.vite/
+.mypy_cache/
+.ruff_cache/
+coverage/
+htmlcov/
+*.log
