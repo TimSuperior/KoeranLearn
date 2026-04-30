@@ -201,6 +201,7 @@ def build_review_overview(db: Session, user: User, limit: int = 5) -> dict[str, 
     interface_language = normalize_language(getattr(user, "interface_language", None))
     explanation_language = normalize_language(getattr(getattr(user, "preferences", None), "explanation_language", None) or interface_language)
     items = db.query(ReviewItem).filter(ReviewItem.user_id == user.id).all()
+    now = datetime.now(timezone.utc)
     if not items:
         return {
             "weak_items": [],
@@ -208,6 +209,7 @@ def build_review_overview(db: Session, user: User, limit: int = 5) -> dict[str, 
             "repeated_mistakes": [],
             "exercise_type_breakdown": [],
             "guided_sessions": [],
+            "schedule": _empty_schedule(),
         }
 
     exercise_ids = [item.item_id for item in items if item.item_type == "exercise"]
@@ -270,7 +272,6 @@ def build_review_overview(db: Session, user: User, limit: int = 5) -> dict[str, 
     mistake_exercise_items = 0
     grammar_focus_items = 0
     listening_items = 0
-    now = datetime.now(timezone.utc)
     for item in items:
         if item.item_type != "exercise":
             continue
@@ -341,6 +342,7 @@ def build_review_overview(db: Session, user: User, limit: int = 5) -> dict[str, 
         "repeated_mistakes": repeated_mistakes,
         "exercise_type_breakdown": [{"exercise_type": key, "count": value} for key, value in sorted(breakdown.items(), key=lambda row: row[1], reverse=True)],
         "guided_sessions": guided_sessions,
+        "schedule": _schedule_payload(items, now),
     }
 
 
@@ -404,3 +406,29 @@ def _review_text(key: str, language: str) -> str:
     entry = REVIEW_COPY.get(key) or {}
     current = entry.get(language) or entry.get("en") or {}
     return str(current.get("text") or key)
+
+
+def _schedule_payload(items: list[ReviewItem], now: datetime) -> dict[str, Any]:
+    next_24h_cutoff = now + timedelta(hours=24)
+    next_7d_cutoff = now + timedelta(days=7)
+    future_reviews = [item for item in items if item.next_review_at > now]
+    next_review_at = min((item.next_review_at for item in future_reviews), default=None)
+    return {
+        "due_now": sum(1 for item in items if item.next_review_at <= now),
+        "next_24h": sum(1 for item in items if now < item.next_review_at <= next_24h_cutoff),
+        "next_7d": sum(1 for item in items if next_24h_cutoff < item.next_review_at <= next_7d_cutoff),
+        "scheduled_total": len(items),
+        "mistake_queue": sum(1 for item in items if item.mistake_count > 0),
+        "next_review_at": next_review_at,
+    }
+
+
+def _empty_schedule() -> dict[str, Any]:
+    return {
+        "due_now": 0,
+        "next_24h": 0,
+        "next_7d": 0,
+        "scheduled_total": 0,
+        "mistake_queue": 0,
+        "next_review_at": None,
+    }

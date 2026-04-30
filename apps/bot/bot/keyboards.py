@@ -41,6 +41,12 @@ def route_start_param(route: str, **params: str) -> str:
         return f"word_{params['word']}"
     if route == "review" and params.get("mode") == "mistakes":
         return "review_mistakes"
+    if route == "review" and params.get("mode") == "grammar":
+        return "review_grammar"
+    if route == "review" and params.get("mode") == "listening":
+        return "review_listening"
+    if route == "review" and params.get("mode") == "vocab":
+        return "review_vocab"
     if route == "review":
         return "review_due"
     if route == "settings":

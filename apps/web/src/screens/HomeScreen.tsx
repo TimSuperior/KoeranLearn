@@ -1,11 +1,11 @@
-import { BookOpen, Ear, Flame, GraduationCap, Languages, MessageCircleMore, Repeat2, Sparkles, TrendingUp } from "lucide-react";
+import { BookOpen, Clock3, Ear, Flame, GraduationCap, Languages, MessageCircleMore, Repeat2, Sparkles, TrendingUp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { ActionCard, Button, EmptyState, ErrorState, HeroCard, MetricCard, SectionHeading, StatusChip, Surface } from "../components/ui";
 import { useI18n } from "../lib/i18n";
 import { track } from "../lib/analytics";
 import { api } from "../lib/api";
-import { interpolate } from "../lib/format";
+import { compactDate, compactTime, interpolate } from "../lib/format";
 import { loadDismissedPrompts, saveDismissedPrompts } from "../lib/local-state";
 import { checkHomeScreenStatus, maybeAddToHomeScreen } from "../lib/telegram";
 import type { AppRoute } from "../lib/routes";
@@ -77,6 +77,72 @@ export function HomeScreen({ user, onNavigate }: { user: AuthUser; onNavigate: (
     [scenarios]
   );
   const guidedSessions = progress?.review_overview.guided_sessions.slice(0, 3) || [];
+  const reviewSchedule = progress?.review_overview.schedule;
+  const focusLane = guidedSessions.find((session) => !["due", "mistakes"].includes(session.mode)) || null;
+
+  const dailyLoop = useMemo(() => {
+    const warmupMode = progress?.due_reviews ? "due" : progress?.mistake_reviews ? "mistakes" : "mixed";
+    const warmupReady = progress?.due_reviews || progress?.mistake_reviews || 0;
+    const applyRoute =
+      focusLane
+        ? ({ screen: "review", mode: focusLane.mode, size: focusLane.size } as AppRoute)
+        : scenarioRecommendation
+          ? ({ screen: "scenarios", scenario: scenarioRecommendation.slug } as AppRoute)
+          : ({ screen: "grammar" } as AppRoute);
+
+    const applyTitle =
+      focusLane?.title
+      || (scenarioRecommendation ? content(scenarioRecommendation.title, ui("home.apply_real_life_title", "Use it in a real-life scene")) : ui("home.apply_real_life_title", "Use it in a real-life scene"));
+
+    const applyDescription =
+      focusLane?.description
+      || (scenarioRecommendation
+        ? content(scenarioRecommendation.description, ui("scenario.hero_description", "Pick a context, hide translations when you want pressure, and switch to listening mode when audio is available."))
+        : ui("home.apply_real_life_description", "Use grammar notes, useful phrases, or a scenario while the lesson is still fresh."));
+
+    return [
+      {
+        key: "warmup",
+        step: "01",
+        title: ui("home.warm_up_title", "Warm up"),
+        description: warmupReady
+          ? interpolate(ui("home.warm_up_description", "{count} review items are ready. Clear the short queue before you push new material."), { count: warmupReady })
+          : ui("home.warm_up_empty", "No urgent reviews are waiting, so keep the warm-up compact and move straight into the lesson."),
+        badge: warmupReady ? `${warmupReady} ${ui("home.ready_now", "ready")}` : ui("home.clear", "Clear"),
+        route: { screen: "review", mode: warmupMode, size: 5, shortcut: "two-minute" } as AppRoute,
+        cta: ui("home.two_minute_review", "2-minute review"),
+      },
+      {
+        key: "lesson",
+        step: "02",
+        title: lesson ? content(lesson.title, ui("home.continue_lesson", "Continue lesson")) : ui("home.continue_lesson", "Continue lesson"),
+        description: lesson
+          ? interpolate(ui("home.lesson_step_description", "{minutes} minutes, guided notes, drills, and recap."), { minutes: lesson.estimated_minutes })
+          : ui("home.lesson_step_empty", "Your next guided lesson is ready. Keep it short and finish one compact step set."),
+        badge: lesson ? `${lesson.estimated_minutes} min` : ui("home.next", "Next"),
+        route: { screen: "lesson", lessonId: lesson?.id || progress?.current_lesson?.id } as AppRoute,
+        cta: ui("home.continue_lesson", "Continue lesson"),
+      },
+      {
+        key: "apply",
+        step: "03",
+        title: applyTitle,
+        description: applyDescription,
+        badge: focusLane ? ui("home.review_due_open", "Open review") : scenarioRecommendation ? ui("route.scenarios", "Scenarios") : ui("route.grammar", "Grammar"),
+        route: applyRoute,
+        cta: focusLane ? ui("home.focus_weak_spot", "Focus weak spot") : scenarioRecommendation ? ui("home.open_scenario", "Open scenario") : ui("home.open_grammar", "Open grammar"),
+      },
+    ];
+  }, [
+    content,
+    focusLane,
+    lesson,
+    progress?.current_lesson?.id,
+    progress?.due_reviews,
+    progress?.mistake_reviews,
+    scenarioRecommendation,
+    ui,
+  ]);
 
   const addToHomeVisible = homeScreenStatus && ["unknown", "missed"].includes(homeScreenStatus) && !dismissed.home_screen_prompt;
 
@@ -164,6 +230,60 @@ export function HomeScreen({ user, onNavigate }: { user: AuthUser; onNavigate: (
         <MetricCard label={ui("home.due_reviews", "Due reviews")} value={progress.due_reviews} detail={ui("home.ready_now", "Ready now")} icon={Repeat2} tone="accent" />
         <MetricCard label={ui("home.completed", "Completed")} value={progress.completed_lessons} detail={ui("home.completed_detail", "Lessons finished")} icon={BookOpen} tone="neutral" />
       </div>
+
+      <Surface>
+        <SectionHeading eyebrow={ui("home.daily_loop", "Daily loop")} title={ui("home.daily_loop_title", "Small steps, in order")} description={ui("home.daily_loop_description", "Warm up, finish one compact lesson, then use the pattern in review or a real-life scenario.")} />
+        <div className="mt-4 space-y-3">
+          {dailyLoop.map((item) => (
+            <div key={item.key} className="flex gap-3 rounded-[22px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[16px] bg-[color:var(--app-accent)] text-sm font-semibold text-[color:var(--app-accent-text)]">
+                {item.step}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold">{item.title}</p>
+                    <p className="mt-1 text-sm leading-6 text-[color:var(--app-muted)]">{item.description}</p>
+                  </div>
+                  <StatusChip tone="neutral">{item.badge}</StatusChip>
+                </div>
+                <div className="mt-3">
+                  <Button variant={item.key === "lesson" ? "primary" : "secondary"} onClick={() => navigate(item.route, `home_${item.key}_loop_tapped`)}>
+                    {item.cta}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Surface>
+
+      {reviewSchedule ? (
+        <Surface>
+          <SectionHeading eyebrow={ui("home.spaced_repetition", "Spaced repetition")} title={ui("home.spaced_repetition_title", "Review schedule at a glance")} description={ui("home.spaced_repetition_description", "Keep the queue small now and let the next reviews land on schedule instead of piling up.")} />
+          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+            {[
+              { key: "due", label: ui("home.due_reviews", "Due reviews"), value: reviewSchedule.due_now },
+              { key: "24h", label: ui("home.next_day", "Next 24h"), value: reviewSchedule.next_24h },
+              { key: "7d", label: ui("home.next_week", "Next 7d"), value: reviewSchedule.next_7d },
+              { key: "mistakes", label: ui("home.mistakes_title", "Mistakes review"), value: reviewSchedule.mistake_queue },
+            ].map((item) => (
+              <div key={item.key} className="rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--app-muted)]">{item.label}</p>
+                <p className="mt-2 text-2xl font-semibold">{item.value}</p>
+              </div>
+            ))}
+          </div>
+          {reviewSchedule.next_review_at ? (
+            <div className="mt-4 flex items-center gap-2 text-sm text-[color:var(--app-muted)]">
+              <Clock3 size={14} />
+              <span>
+                {ui("home.next_review_slot", "Next scheduled review")}: {compactDate(reviewSchedule.next_review_at, user.interface_language)} {compactTime(reviewSchedule.next_review_at, user.interface_language)}
+              </span>
+            </div>
+          ) : null}
+        </Surface>
+      ) : null}
 
       {guidedSessions.length ? (
         <Surface>

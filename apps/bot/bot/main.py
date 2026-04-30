@@ -121,6 +121,12 @@ def parse_deep_link(payload: str | None) -> dict[str, str] | None:
         return {"type": "review"}
     if payload == "review_mistakes":
         return {"type": "mistakes"}
+    if payload == "review_grammar":
+        return {"type": "review_grammar"}
+    if payload == "review_listening":
+        return {"type": "review_listening"}
+    if payload == "review_vocab":
+        return {"type": "review_vocab"}
     if payload in {"settings", "screen_settings"}:
         return {"type": "settings"}
     if payload in {"library", "screen_library"}:
@@ -909,6 +915,17 @@ async def handle_deep_link(target: Message, state: FSMContext, payload: str | No
         return True
     if action == "mistakes":
         await send_review_queue(target, target.chat.id, "mistakes", language)
+        return True
+    if action in {"review_grammar", "review_listening", "review_vocab"}:
+        mode = action.replace("review_", "")
+        await target.answer(
+            tr("menu_hint", language),
+            reply_markup=content_actions_keyboard(
+                web_route="review",
+                web_label=button("open_review", language),
+                web_params={"mode": mode},
+            ),
+        )
         return True
     if action == "settings":
         await send_settings_overview(target, target.chat.id, language)

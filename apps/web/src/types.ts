@@ -309,6 +309,15 @@ export type ReviewExerciseBreakdown = {
   count: number;
 };
 
+export type ReviewScheduleSummary = {
+  due_now: number;
+  next_24h: number;
+  next_7d: number;
+  scheduled_total: number;
+  mistake_queue: number;
+  next_review_at: string | null;
+};
+
 export type ReviewGuidedSession = {
   mode: "due" | "mistakes" | "vocab" | "grammar" | "mixed" | "listening";
   title: string;
@@ -324,6 +333,7 @@ export type ReviewOverview = {
   repeated_mistakes: ReviewInsightItem[];
   exercise_type_breakdown: ReviewExerciseBreakdown[];
   guided_sessions: ReviewGuidedSession[];
+  schedule: ReviewScheduleSummary;
 };
 
 export type ScenarioProgress = {

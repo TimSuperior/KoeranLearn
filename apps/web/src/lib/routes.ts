@@ -56,6 +56,9 @@ function parseStartParam(startParam?: string | null): AppRoute | null {
   if (startParam.startsWith("word_")) return { screen: "vocab", vocabId: parsePositiveInt(startParam.split("_", 2)[1] || null) };
   if (startParam === "review" || startParam === "review_due") return { screen: "review", mode: "due" };
   if (startParam === "review_mistakes") return { screen: "review", mode: "mistakes" };
+  if (startParam === "review_grammar") return { screen: "review", mode: "grammar" };
+  if (startParam === "review_listening") return { screen: "review", mode: "listening" };
+  if (startParam === "review_vocab") return { screen: "review", mode: "vocab" };
   if (startParam === "quiz" || startParam === "quiz_mixed") return { screen: "review", mode: "mixed", shortcut: "two-minute", size: 5 };
   if (startParam === "settings" || startParam === "screen_settings") return { screen: "settings" };
   if (startParam === "dialogue" || startParam === "screen_scenarios") return { screen: "scenarios" };
@@ -76,13 +79,16 @@ function parseLegacySearch(searchValue: string): AppRoute | null {
   const grammarId = parsePositiveInt(search.get("grammar"));
   const vocabId = parsePositiveInt(search.get("word"));
   const tab = search.get("tab");
+  const reviewMode = search.get("mode") as ReviewMode | null;
+  const reviewSize = parsePositiveInt(search.get("size"));
+  const reviewShortcut = search.get("shortcut") === "two-minute" ? "two-minute" : undefined;
 
   if (lessonId) return { screen: "lesson", lessonId };
   if (scenario) return { screen: "scenarios", scenario };
   if (grammarId) return { screen: "grammar", grammarId };
   if (vocabId) return { screen: "vocab", vocabId };
 
-  if (screen === "review") return { screen: "review", mode: "due" };
+  if (screen === "review") return { screen: "review", mode: reviewMode || "due", size: reviewSize, shortcut: reviewShortcut };
   if (screen === "scenarios") return { screen: "scenarios" };
   if (screen === "settings") return { screen: "settings" };
   if (screen === "admin") return { screen: "admin" };
@@ -157,6 +163,10 @@ export function buildStartParam(route: AppRoute): string {
   if (route.screen === "grammar" && route.grammarId) return `grammar_${route.grammarId}`;
   if (route.screen === "vocab" && route.vocabId) return `word_${route.vocabId}`;
   if (route.screen === "review" && route.mode === "mistakes") return "review_mistakes";
+  if (route.screen === "review" && route.mode === "grammar") return "review_grammar";
+  if (route.screen === "review" && route.mode === "listening") return "review_listening";
+  if (route.screen === "review" && route.mode === "vocab") return "review_vocab";
+  if (route.screen === "review" && route.mode === "mixed") return "quiz_mixed";
   if (route.screen === "review") return "review_due";
   if (route.screen === "progress") return "progress";
   if (route.screen === "settings") return "settings";

@@ -29,6 +29,14 @@ function assetLabel(asset: LessonAsset): string {
   return String(asset.metadata_json.label || asset.asset_type).replaceAll("_", " ");
 }
 
+function blockSectionLabel(blockType: string, ui: (key: string, fallback?: string) => string): string {
+  if (blockType === "scenario_link") return ui("lesson.sample_dialogue", "Sample dialogue");
+  if (blockType === "recap") return ui("lesson.review_lesson", "Review lesson");
+  if (blockType === "quiz") return ui("lesson.review_quiz", "Review quiz");
+  if (blockType === "exercise") return ui("lesson.guided_drill", "Guided drill");
+  return ui("lesson.notes", "Lesson notes");
+}
+
 export function LessonPlayer({
   user,
   lesson,
@@ -56,6 +64,20 @@ export function LessonPlayer({
   const lessonAudio = (lesson?.assets || []).filter((asset) => asset.asset_type.toLowerCase().includes("audio"));
   const progressTotal = steps.length + 1;
   const progressValue = complete ? progressTotal : stepIndex + 1;
+  const transferNotes = lesson?.transfer_notes?.[user.interface_language] || lesson?.transfer_notes?.en || [];
+  const scenarioBlock = visibleBlocks.find((block) => block.block_type === "scenario_link" && Number(block.payload.scenario_id));
+  const sampleScenario =
+    (scenarioBlock ? lesson?.related_scenarios.find((item) => item.id === Number(scenarioBlock.payload.scenario_id)) : null)
+    || lesson?.related_scenarios[0]
+    || null;
+  const lessonNotesCount = visibleBlocks.filter((block) => ["explanation", "grammar", "vocabulary", "example_sentence"].includes(block.block_type)).length + (transferNotes.length ? 1 : 0);
+  const recapCount = visibleBlocks.filter((block) => ["recap", "quiz"].includes(block.block_type)).length + (lesson?.related_grammar.length || lesson?.related_vocabulary.length ? 1 : 0);
+  const phaseLabel =
+    activeStep?.kind === "overview"
+      ? ui("lesson.map", "Lesson map")
+      : activeStep?.kind === "exercise"
+        ? ui("lesson.review_quiz", "Review quiz")
+        : blockSectionLabel(activeStep.block.block_type, ui);
 
   useEffect(() => {
     if (!lesson) return;
@@ -152,6 +174,60 @@ export function LessonPlayer({
             ) : null}
           </HeroCard>
 
+          <Surface>
+            <SectionHeading eyebrow={ui("lesson.map", "Lesson map")} title={ui("lesson.map_title", "Notes, dialogue, quiz, recap")} description={ui("lesson.map_description", "Move through the notes first, then practice, then lock the lesson in with review while recall is still fresh.")} />
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
+                <p className="text-sm font-semibold">{ui("lesson.notes", "Lesson notes")}</p>
+                <p className="mt-1 text-sm leading-6 text-[color:var(--app-muted)]">{ui("lesson.notes_description", "Compact explanations, transfer notes, and example patterns.")}</p>
+                <div className="mt-3"><StatusChip tone="neutral">{lessonNotesCount || 1} {ui("lesson.step_units", "steps")}</StatusChip></div>
+              </div>
+              <div className="rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
+                <p className="text-sm font-semibold">{ui("lesson.sample_dialogue", "Sample dialogue")}</p>
+                <p className="mt-1 text-sm leading-6 text-[color:var(--app-muted)]">
+                  {sampleScenario
+                    ? content(sampleScenario.description, ui("lesson.sample_dialogue_description", "Use one real-life scene to hear the pattern in context."))
+                    : ui("lesson.sample_dialogue_description", "Use one real-life scene to hear the pattern in context.")}
+                </p>
+                <div className="mt-3"><StatusChip tone="neutral">{sampleScenario ? ui("home.recommended", "Recommended") : ui("lesson.optional", "Optional")}</StatusChip></div>
+              </div>
+              <div className="rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
+                <p className="text-sm font-semibold">{ui("lesson.review_quiz", "Review quiz")}</p>
+                <p className="mt-1 text-sm leading-6 text-[color:var(--app-muted)]">{ui("lesson.review_quiz_description", "Short drills that can be finished in a few minutes.")}</p>
+                <div className="mt-3"><StatusChip tone="accent">{exercises.length} {ui("review.items", "items")}</StatusChip></div>
+              </div>
+              <div className="rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
+                <p className="text-sm font-semibold">{ui("lesson.review_lesson", "Review lesson")}</p>
+                <p className="mt-1 text-sm leading-6 text-[color:var(--app-muted)]">{ui("lesson.review_lesson_description", "Finish with recap, then jump straight into spaced repetition or a weak-topic review.")}</p>
+                <div className="mt-3"><StatusChip tone="neutral">{recapCount || 1} {ui("lesson.touchpoints", "touchpoints")}</StatusChip></div>
+              </div>
+            </div>
+          </Surface>
+
+          {transferNotes.length ? (
+            <Surface>
+              <SectionHeading eyebrow={ui("lesson.notes", "Lesson notes")} title={ui("lesson.learner_notes", "Notes for your language")} description={ui("lesson.learner_notes_description", "These are the likely transfer mistakes to watch before you answer fast.")} />
+              <div className="mt-4 grid gap-2">
+                {transferNotes.slice(0, 4).map((note) => (
+                  <div key={note} className="rounded-[18px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4 py-3 text-sm leading-6 text-[color:var(--app-text)]">
+                    {note}
+                  </div>
+                ))}
+              </div>
+            </Surface>
+          ) : null}
+
+          {sampleScenario ? (
+            <Surface>
+              <SectionHeading eyebrow={ui("lesson.sample_dialogue", "Sample dialogue")} title={content(sampleScenario.title, ui("route.scenarios", "Scenarios"))} description={content(sampleScenario.description, ui("lesson.sample_dialogue_description", "Use one real-life scene to hear the pattern in context."))} />
+              <div className="mt-4">
+                <Button variant="secondary" onClick={() => onNavigate({ screen: "scenarios", scenario: sampleScenario.slug })}>
+                  {ui("lesson.open_sample_dialogue", "Open sample dialogue")}
+                </Button>
+              </div>
+            </Surface>
+          ) : null}
+
           {lessonAudio.length ? (
             <Surface>
               <SectionHeading eyebrow={ui("lesson.listen", "Listen")} title={ui("lesson.lesson_audio", "Lesson audio")} description={ui("lesson.lesson_audio_description", "Use the audio before you answer to tune your ear to the target pattern.")} />
@@ -188,7 +264,7 @@ export function LessonPlayer({
       const audioLocked = Boolean(activeStep.block.payload.audio_locked);
       return (
         <Surface>
-          <SectionHeading eyebrow={activeStep.block.block_type.replaceAll("_", " ")} title={content(activeStep.block.title, activeStep.block.block_type.replaceAll("_", " "))} description={content(activeStep.block.body)} />
+          <SectionHeading eyebrow={blockSectionLabel(activeStep.block.block_type, ui)} title={content(activeStep.block.title, blockSectionLabel(activeStep.block.block_type, ui))} description={content(activeStep.block.body)} />
           {audioItems.length ? (
             <div className="mt-4 space-y-3">
               {audioItems.map((item) => (
@@ -291,6 +367,37 @@ export function LessonPlayer({
           </div>
         </HeroCard>
 
+        <Surface>
+          <SectionHeading eyebrow={ui("lesson.lock_it_in", "Lock it in")} title={ui("lesson.lock_it_in_title", "Review while the pattern is warm")} description={ui("lesson.lock_it_in_description", "Use a short review, a grammar repair lane, or a real-life dialogue before you leave the lesson.")} />
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <button type="button" onClick={() => onNavigate({ screen: "review", mode: "due", size: 5 })} className="flex items-center justify-between rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4 py-3 text-left">
+              <div>
+                <p className="font-semibold">{ui("lesson.review_now", "Review now")}</p>
+                <p className="text-sm text-[color:var(--app-muted)]">{ui("lesson.review_quiz_description", "Short drills that can be finished in a few minutes.")}</p>
+              </div>
+              <Sparkles size={18} className="text-[color:var(--app-accent)]" />
+            </button>
+            <button type="button" onClick={() => onNavigate({ screen: "review", mode: "grammar", size: 5 })} className="flex items-center justify-between rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4 py-3 text-left">
+              <div>
+                <p className="font-semibold">{ui("grammar.quick_review", "Quick grammar review")}</p>
+                <p className="text-sm text-[color:var(--app-muted)]">{ui("lesson.weak_topic_description", "Repair weak grammar before the mistake becomes a habit.")}</p>
+              </div>
+              <GraduationCap size={18} className="text-[color:var(--app-accent)]" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate(sampleScenario ? { screen: "scenarios", scenario: sampleScenario.slug } : { screen: "scenarios" })}
+              className="flex items-center justify-between rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4 py-3 text-left"
+            >
+              <div>
+                <p className="font-semibold">{ui("lesson.sample_dialogue", "Sample dialogue")}</p>
+                <p className="text-sm text-[color:var(--app-muted)]">{ui("lesson.sample_dialogue_description", "Use one real-life scene to hear the pattern in context.")}</p>
+              </div>
+              <MessageCircleMore size={18} className="text-[color:var(--app-accent)]" />
+            </button>
+          </div>
+        </Surface>
+
         {(currentLesson.related_vocabulary.length || currentLesson.related_grammar.length || currentLesson.related_scenarios.length) ? (
           <Surface>
             <SectionHeading eyebrow={ui("lesson.linked_references", "Linked references")} title={ui("lesson.continue_connected", "Continue with connected material")} description={ui("lesson.continue_connected", "Continue with connected material")} />
@@ -356,6 +463,7 @@ export function LessonPlayer({
             <p className="mt-1 text-sm text-[color:var(--app-muted)]">{interpolate(ui("lesson.steps", "{current}/{total} steps"), { current: progressValue, total: progressTotal })} • {currentLesson.estimated_minutes} min</p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <StatusChip tone="neutral">{phaseLabel}</StatusChip>
             {currentLesson.has_audio ? <StatusChip tone="success"><Ear size={12} /> {ui("lesson.listen", "Listen")}</StatusChip> : null}
             <StatusChip tone="neutral">{currentLesson.difficulty}</StatusChip>
           </div>

@@ -94,6 +94,7 @@ export function ReviewScreen({
   }, [activeMode, sessionSize, user.telegram_id]);
 
   const reviewOverview = progress?.review_overview || emptyOverview();
+  const reviewSchedule = reviewOverview.schedule || emptyOverview().schedule;
   const reviewItem = queue[currentIndex];
   const quizExercise = quizSession?.exercises[currentIndex] || null;
   const isQuiz = usesQuizMode(activeMode);
@@ -222,6 +223,31 @@ export function ReviewScreen({
           <Button variant="secondary" onClick={() => restart("due", 5)}>{ui("home.two_minute_review", "2-minute review")}</Button>
         </div>
       </HeroCard>
+
+      <Surface>
+        <SectionHeading eyebrow={ui("home.spaced_repetition", "Spaced repetition")} title={ui("review.schedule_title", "Scheduled reviews")} description={ui("review.schedule_description", "Use the due queue now, but keep an eye on what is landing over the next day and week.")} />
+        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+          {[
+            { key: "due", label: ui("home.due_reviews", "Due reviews"), value: reviewSchedule.due_now },
+            { key: "24h", label: ui("home.next_day", "Next 24h"), value: reviewSchedule.next_24h },
+            { key: "7d", label: ui("home.next_week", "Next 7d"), value: reviewSchedule.next_7d },
+            { key: "mistakes", label: ui("home.mistakes_title", "Mistakes review"), value: reviewSchedule.mistake_queue },
+          ].map((item) => (
+            <div key={item.key} className="rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--app-muted)]">{item.label}</p>
+              <p className="mt-2 text-2xl font-semibold">{item.value}</p>
+            </div>
+          ))}
+        </div>
+        {reviewSchedule.next_review_at ? (
+          <div className="mt-4 flex items-center gap-2 text-sm text-[color:var(--app-muted)]">
+            <Clock3 size={14} />
+            <span>
+              {ui("review.next_review_slot", "Next scheduled review")}: {compactDate(reviewSchedule.next_review_at, user.interface_language)} {compactTime(reviewSchedule.next_review_at, user.interface_language)}
+            </span>
+          </div>
+        ) : null}
+      </Surface>
 
       <Surface>
         <SectionHeading eyebrow={ui("review.session_size", "Session size")} title={ui("review.choose_length", "Choose the session length")} />
@@ -363,7 +389,15 @@ function emptyOverview(): ReviewOverview {
     weak_grammar: [],
     repeated_mistakes: [],
     exercise_type_breakdown: [],
-    guided_sessions: []
+    guided_sessions: [],
+    schedule: {
+      due_now: 0,
+      next_24h: 0,
+      next_7d: 0,
+      scheduled_total: 0,
+      mistake_queue: 0,
+      next_review_at: null,
+    },
   };
 }
 
