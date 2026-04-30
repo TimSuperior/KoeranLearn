@@ -2,15 +2,19 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from sqlalchemy.orm import Session
 
 from app.admin_schemas import (
+    AuditTrailResponse,
     AdminBulkStatusRequest,
     AdminContentListResponse,
     AdminContentWriteRequest,
     AdminReorderRequest,
     ContentOptionsResponse,
+    DashboardSummary,
     ExportResponse,
     ImportRequest,
     ImportResult,
     PreviewResponse,
+    PublishQueueResponse,
+    ValidationCenterResponse,
     ValidationResult,
 )
 from app.core.db import get_db
@@ -18,22 +22,26 @@ from app.core.security import get_current_admin
 from app.core.config import Settings, get_settings
 from app.models.schema import AdminUser, AudioAsset
 from app.services.admin_content_service import (
+    audit_trail,
     build_preview,
     bulk_update_status,
     create_entity,
     dashboard,
     delete_entity,
     duplicate_entity,
+    publish_queue,
     export_entity,
     get_entity,
     import_entity,
     list_entities,
     publish_entity,
+    record_admin_audit_event,
     relation_options,
     reorder_entity,
     template_export,
     unpublish_entity,
     update_entity,
+    validation_center,
     validate_current_entity,
     validate_payload_entity,
 )
@@ -42,8 +50,8 @@ from app.services.audio_service import create_audio_asset_from_upload, replace_a
 router = APIRouter(prefix="/api/admin/content", tags=["admin-content"], dependencies=[Depends(get_current_admin)])
 
 
-@router.get("/dashboard")
-def dashboard_summary(db: Session = Depends(get_db), admin: AdminUser = Depends(get_current_admin)) -> dict:
+@router.get("/dashboard", response_model=DashboardSummary)
+def dashboard_summary(db: Session = Depends(get_db), admin: AdminUser = Depends(get_current_admin)) -> DashboardSummary:
     return dashboard(db)
 
 
@@ -101,23 +109,74 @@ def preview_item(
     return build_preview(db, entity, item_id, viewer_access=viewer_access)
 
 
+@router.get("/publish-queue", response_model=PublishQueueResponse)
+def publish_queue_items(
+    entity: str | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(get_current_admin),
+) -> PublishQueueResponse:
+    return publish_queue(db, entity=entity, q=q, limit=limit, offset=offset)
+
+
+@router.get("/issues", response_model=ValidationCenterResponse)
+def validation_issues(
+    entity: str | None = None,
+    q: str | None = None,
+    level: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(get_current_admin),
+) -> ValidationCenterResponse:
+    return validation_center(db, entity=entity, q=q, level=level, limit=limit, offset=offset)
+
+
+@router.get("/audit", response_model=AuditTrailResponse)
+def audit_history(
+    entity: str | None = None,
+    item_id: int | None = None,
+    action: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(get_current_admin),
+) -> AuditTrailResponse:
+    return audit_trail(db, entity=entity, item_id=item_id, action=action, limit=limit, offset=offset)
+
+
 @router.get("/export/{entity}", response_model=ExportResponse)
 def export_items(
     entity: str,
+    request: Request,
     format: str = Query(default="json"),
     db: Session = Depends(get_db),
     admin: AdminUser = Depends(get_current_admin),
 ) -> ExportResponse:
-    return export_entity(db, entity, format_name=format)
+    return export_entity(db, entity, format_name=format, admin=admin, request_id=getattr(request.state, "request_id", None))
 
 
 @router.get("/templates/{entity}", response_model=ExportResponse)
 def export_template(
     entity: str,
+    request: Request,
     format: str = Query(default="json"),
+    db: Session = Depends(get_db),
     admin: AdminUser = Depends(get_current_admin),
 ) -> ExportResponse:
-    return template_export(entity, format_name=format)
+    response = template_export(entity, format_name=format)
+    record_admin_audit_event(
+        db,
+        admin=admin,
+        action="template_export",
+        entity=entity,
+        after={"format": format, "filename": response.filename},
+        request_id=getattr(request.state, "request_id", None),
+    )
+    db.commit()
+    return response
 
 
 @router.post("/import/{entity}", response_model=ImportResult)
@@ -171,6 +230,7 @@ def list_items(
 
 @router.post("/audio-assets/upload", response_model=dict)
 def upload_audio_asset(
+    request: Request,
     file: UploadFile = File(...),
     audio_asset_id: int | None = Form(default=None),
     attachment_role: str = Form(default="general"),
@@ -182,9 +242,31 @@ def upload_audio_asset(
         asset = db.get(AudioAsset, audio_asset_id)
         if not asset or asset.is_deleted:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio asset not found")
+        before = get_entity(db, "audio-assets", asset.id)
         row = replace_audio_asset_file(db=db, asset=asset, admin_id=admin.id, file=file, settings=settings)
+        after = get_entity(db, "audio-assets", row.id)
+        record_admin_audit_event(
+            db,
+            admin=admin,
+            action="upload",
+            entity="audio-assets",
+            entity_id=row.id,
+            before=before,
+            after=after,
+            request_id=getattr(request.state, "request_id", None),
+        )
     else:
         row = create_audio_asset_from_upload(db=db, admin_id=admin.id, file=file, settings=settings, attachment_role=attachment_role)
+        after = get_entity(db, "audio-assets", row.id)
+        record_admin_audit_event(
+            db,
+            admin=admin,
+            action="upload",
+            entity="audio-assets",
+            entity_id=row.id,
+            after=after,
+            request_id=getattr(request.state, "request_id", None),
+        )
     db.commit()
     return get_entity(db, "audio-assets", row.id)
 

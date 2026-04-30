@@ -1,11 +1,12 @@
 import { Bookmark, BookmarkCheck, Ear, Flag, Link2, Search, Star } from "lucide-react";
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { AudioPlayer, Button, EmptyState, ErrorState, FilterChip, HeroCard, IconButton, LoadingCard, SectionHeading, StatusChip, Surface } from "../components/ui";
+
+import { AudioPlayer, EmptyState, ErrorState, FilterChip, HeroCard, IconButton, LoadingCard, SectionHeading, StatusChip, Surface } from "../components/ui";
+import { useI18n } from "../lib/i18n";
 import { track } from "../lib/analytics";
-import { t, topicLabel } from "../lib/format";
+import { api } from "../lib/api";
 import { loadWordFlags, saveWordFlags } from "../lib/local-state";
 import type { AppRoute } from "../lib/routes";
-import { api } from "../lib/api";
 import type { AuthUser, ReviewItem, Vocabulary } from "../types";
 
 export function VocabularyScreen({
@@ -21,6 +22,7 @@ export function VocabularyScreen({
   q?: string;
   onNavigate: (route: AppRoute) => void;
 }) {
+  const { content, explanationLanguage, topicLabel, ui } = useI18n();
   const [items, setItems] = useState<Vocabulary[]>([]);
   const [detail, setDetail] = useState<Vocabulary | null>(null);
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
@@ -41,8 +43,8 @@ export function VocabularyScreen({
         setItems(vocabItems);
         setReviewItems(reviewQueue.filter((item) => item.item_type === "vocabulary"));
       })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Could not load vocabulary.");
+      .catch(() => {
+        if (!cancelled) setError(ui("vocab.load_error", "Could not load vocabulary."));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -89,7 +91,7 @@ export function VocabularyScreen({
   }
 
   if (loading) {
-    return <LoadingCard label="Loading vocabulary" />;
+    return <LoadingCard label={ui("route.vocab", "Vocabulary")} />;
   }
 
   if (error) {
@@ -98,19 +100,19 @@ export function VocabularyScreen({
 
   return (
     <div className="space-y-4">
-      <HeroCard eyebrow="Vocabulary" title="Search by topic and review pressure" description="Use bookmarks for your own difficult words, and use review chips to spot what is due now." />
+      <HeroCard eyebrow={ui("route.vocab", "Vocabulary")} title={ui("vocab.hero_title", "Search by topic and review pressure")} description={ui("vocab.hero_description", "Use bookmarks for your own difficult words, and use review chips to spot what is due now.")} />
 
       {detail ? (
         <Surface>
           <SectionHeading
             eyebrow={topicLabel(detail.topic)}
             title={detail.korean}
-            description={detail.reading || t(detail.translations, user.interface_language)}
+            description={detail.reading || content(detail.translations)}
             action={
               <div className="flex gap-2">
                 <IconButton
                   icon={flags[String(detail.id)]?.bookmarked ? BookmarkCheck : Bookmark}
-                  label="Bookmark"
+                  label={ui("vocab.bookmark", "Bookmark")}
                   tone={flags[String(detail.id)]?.bookmarked ? "warning" : "neutral"}
                   onClick={() => {
                     const next = !flags[String(detail.id)]?.bookmarked;
@@ -124,7 +126,7 @@ export function VocabularyScreen({
                 />
                 <IconButton
                   icon={flags[String(detail.id)]?.difficult ? Star : Flag}
-                  label="Mark difficult"
+                  label={ui("vocab.mark_difficult", "Mark difficult")}
                   tone={flags[String(detail.id)]?.difficult ? "danger" : "neutral"}
                   onClick={() => {
                     const next = !flags[String(detail.id)]?.difficult;
@@ -142,36 +144,36 @@ export function VocabularyScreen({
           <div className="mt-4 flex flex-wrap gap-2">
             {detail.tags.slice(0, 4).map((tag) => <StatusChip key={tag} tone="neutral">{tag}</StatusChip>)}
             {reviewMap.get(detail.id) ? <StatusChip tone={reviewMap.get(detail.id)?.mistake_count ? "danger" : "accent"}>{reviewMap.get(detail.id)?.mastery_status}</StatusChip> : null}
-            {detail.audio_locked ? <StatusChip tone="warning">Premium audio</StatusChip> : null}
+            {detail.audio_locked ? <StatusChip tone="warning">{ui("vocab.audio_locked", "Audio locked")}</StatusChip> : null}
           </div>
           {detail.audio_items.length ? (
             <div className="mt-4 space-y-3">
               {detail.audio_items.map((item) => (
-                <AudioPlayer key={item.id} item={item} label="Pronunciation" language={user.interface_language} />
+                <AudioPlayer key={item.id} item={item} label={ui("vocab.pronunciation", "Pronunciation")} language={explanationLanguage} />
               ))}
             </div>
           ) : null}
-          {detail.audio_locked ? <p className="mt-4 text-sm text-[color:var(--app-secondary)]">Premium pronunciation audio is locked for this item.</p> : null}
-          {detail.usage_notes[user.interface_language] ? <p className="mt-4 text-sm leading-7 text-[color:var(--app-muted)]">{detail.usage_notes[user.interface_language]}</p> : null}
-          {detail.notes[user.interface_language] ? <p className="mt-2 text-sm leading-7 text-[color:var(--app-muted)]">{detail.notes[user.interface_language]}</p> : null}
+          {detail.audio_locked ? <p className="mt-4 text-sm text-[color:var(--app-secondary)]">{ui("vocab.premium_pronunciation_locked", "Premium pronunciation audio is locked for this item.")}</p> : null}
+          {detail.usage_notes[explanationLanguage] ? <p className="mt-4 text-sm leading-7 text-[color:var(--app-muted)]">{content(detail.usage_notes)}</p> : null}
+          {detail.notes[explanationLanguage] ? <p className="mt-2 text-sm leading-7 text-[color:var(--app-muted)]">{content(detail.notes)}</p> : null}
 
           {detail.example_sentences.length ? (
             <div className="mt-5">
-              <SectionHeading eyebrow="Examples" title="See the word in context" />
+              <SectionHeading eyebrow={ui("vocab.examples", "Examples")} title={ui("vocab.examples_title", "See the word in context")} />
               <div className="mt-3 grid gap-3">
                 {detail.example_sentences.slice(0, 3).map((sentence) => (
                   <div key={sentence.id} className="rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
                     <p className="text-base font-semibold">{sentence.korean}</p>
-                    <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{t(sentence.translations, user.interface_language)}</p>
-                    {sentence.explanation?.[user.interface_language] ? <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{t(sentence.explanation, user.interface_language)}</p> : null}
+                    <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{content(sentence.translations)}</p>
+                    {sentence.explanation?.[explanationLanguage] ? <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{content(sentence.explanation)}</p> : null}
                     {sentence.audio_items.length ? (
                       <div className="mt-3 space-y-3">
                         {sentence.audio_items.map((item) => (
-                          <AudioPlayer key={item.id} item={item} label="Example audio" language={user.interface_language} />
+                          <AudioPlayer key={item.id} item={item} label={ui("vocab.examples", "Examples")} language={explanationLanguage} />
                         ))}
                       </div>
                     ) : null}
-                    {sentence.audio_locked ? <p className="mt-3 text-sm text-[color:var(--app-secondary)]">Premium example audio is locked.</p> : null}
+                    {sentence.audio_locked ? <p className="mt-3 text-sm text-[color:var(--app-secondary)]">{ui("lesson.premium", "Premium")} audio</p> : null}
                   </div>
                 ))}
               </div>
@@ -183,8 +185,8 @@ export function VocabularyScreen({
               {detail.related_lessons?.slice(0, 2).map((lesson) => (
                 <button key={`lesson-${lesson.id}`} type="button" onClick={() => onNavigate({ screen: "lesson", lessonId: lesson.id })} className="flex items-center justify-between rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4 py-3 text-left">
                   <div>
-                    <p className="font-semibold">{t(lesson.title, user.interface_language)}</p>
-                    <p className="text-sm text-[color:var(--app-muted)]">{t(lesson.summary, user.interface_language)}</p>
+                    <p className="font-semibold">{content(lesson.title)}</p>
+                    <p className="text-sm text-[color:var(--app-muted)]">{content(lesson.summary)}</p>
                   </div>
                   <Link2 size={16} className="text-[color:var(--app-accent)]" />
                 </button>
@@ -192,8 +194,8 @@ export function VocabularyScreen({
               {detail.related_scenarios?.slice(0, 2).map((scenario) => (
                 <button key={`scenario-${scenario.id}`} type="button" onClick={() => onNavigate({ screen: "scenarios", scenario: scenario.slug })} className="flex items-center justify-between rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4 py-3 text-left">
                   <div>
-                    <p className="font-semibold">{t(scenario.title, user.interface_language)}</p>
-                    <p className="text-sm text-[color:var(--app-muted)]">{t(scenario.description, user.interface_language)}</p>
+                    <p className="font-semibold">{content(scenario.title)}</p>
+                    <p className="text-sm text-[color:var(--app-muted)]">{content(scenario.description)}</p>
                   </div>
                   <Link2 size={16} className="text-[color:var(--app-accent)]" />
                 </button>
@@ -204,26 +206,26 @@ export function VocabularyScreen({
       ) : null}
 
       <Surface>
-        <SectionHeading eyebrow="Filters" title="Topic, tag, review state" />
+        <SectionHeading eyebrow={ui("vocab.filters", "Filters")} title={ui("vocab.filters_title", "Topic, tag, review state")} />
         <div className="mt-4 flex items-center gap-2 rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4">
           <Search size={16} className="text-[color:var(--app-muted)]" />
           <input
             value={search}
             onChange={(event) => startTransition(() => setSearch(event.target.value))}
-            placeholder="Search Korean, reading, or translation"
+            placeholder={ui("vocab.search_placeholder", "Search Korean, reading, or translation")}
             className="h-12 w-full bg-transparent text-sm outline-none"
           />
         </div>
         <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
           {topics.map((item) => (
             <FilterChip key={item} active={item === activeTopic} onClick={() => setActiveTopic(item)}>
-              {item === "all" ? "All" : topicLabel(item)}
+              {item === "all" ? ui("topic.all", "All") : topicLabel(item)}
             </FilterChip>
           ))}
         </div>
       </Surface>
 
-      {filtered.length === 0 ? <EmptyState title="No matching words" description="Try another topic or a broader search." /> : null}
+      {filtered.length === 0 ? <EmptyState title={ui("vocab.empty_title", "No matching words")} description={ui("vocab.empty_description", "Try another topic or a broader search.")} /> : null}
 
       <div className="grid gap-3">
         {filtered.map((item) => {
@@ -236,14 +238,14 @@ export function VocabularyScreen({
                   <div className="flex items-center gap-2">
                     <h2 className="text-lg font-semibold">{item.korean}</h2>
                     {item.audio_items.length ? <Ear size={16} className="text-[color:var(--app-accent)]" /> : null}
-                    {item.audio_locked ? <StatusChip tone="warning">Audio locked</StatusChip> : null}
+                    {item.audio_locked ? <StatusChip tone="warning">{ui("vocab.audio_locked", "Audio locked")}</StatusChip> : null}
                   </div>
                   {item.reading ? <p className="mt-1 text-sm text-[color:var(--app-muted)]">{item.reading}</p> : null}
-                  <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{t(item.translations, user.interface_language)}</p>
+                  <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{content(item.translations)}</p>
                 </div>
                 <div className="flex flex-col items-end gap-2">
-                  {wordFlags.bookmarked ? <StatusChip tone="warning">Saved</StatusChip> : null}
-                  {wordFlags.difficult ? <StatusChip tone="danger">Difficult</StatusChip> : null}
+                  {wordFlags.bookmarked ? <StatusChip tone="warning">{ui("vocab.saved", "Saved")}</StatusChip> : null}
+                  {wordFlags.difficult ? <StatusChip tone="danger">{ui("vocab.difficult", "Difficult")}</StatusChip> : null}
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">

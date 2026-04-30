@@ -99,7 +99,7 @@ def complete_onboarding(db: Session, payload: OnboardingCompleteRequest) -> User
 
     if not user.preferences:
         user.preferences = UserPreference(user_id=user.id)
-    user.preferences.explanation_language = payload.interface_language
+    user.preferences.explanation_language = payload.explanation_language or payload.interface_language
     user.preferences.reminder_time = payload.reminder_time
 
     db.query(UserGoal).filter(UserGoal.user_id == user.id).delete()

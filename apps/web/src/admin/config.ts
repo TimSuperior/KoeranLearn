@@ -1,18 +1,32 @@
 import type { AdminEntityKey } from "./types";
 
 export const CORE_ENTITIES: AdminEntityKey[] = ["lessons", "vocabulary", "grammar", "scenarios", "dialogues", "exercises", "audio-assets"];
-export const SUPPORT_ENTITIES: AdminEntityKey[] = ["paths", "courses", "modules", "example-sentences", "tags", "localization"];
+export const SUPPORT_ENTITIES: AdminEntityKey[] = [
+  "paths",
+  "courses",
+  "modules",
+  "lesson-blocks",
+  "exercise-options",
+  "example-sentences",
+  "dialogue-lines",
+  "tags",
+  "localization",
+  "premium-packs"
+];
 
 export const ENTITY_LABELS: Record<AdminEntityKey, string> = {
   paths: "Paths",
   courses: "Courses",
   modules: "Modules",
   lessons: "Lessons",
+  "lesson-blocks": "Lesson Blocks",
   vocabulary: "Vocabulary",
   grammar: "Grammar",
   scenarios: "Scenarios",
   dialogues: "Dialogues",
+  "dialogue-lines": "Dialogue Lines",
   exercises: "Exercises",
+  "exercise-options": "Exercise Options",
   "audio-assets": "Audio Assets",
   "example-sentences": "Example Sentences",
   tags: "Tags",
@@ -20,8 +34,21 @@ export const ENTITY_LABELS: Record<AdminEntityKey, string> = {
   "premium-packs": "Premium Packs",
 };
 
-export const ORDERABLE_ENTITIES = new Set<AdminEntityKey>(["paths", "courses", "modules", "lessons", "scenarios", "dialogues", "exercises", "tags", "premium-packs"]);
-export const ACCESS_FILTER_ENTITIES = new Set<AdminEntityKey>(["paths", "courses", "modules", "lessons", "vocabulary", "grammar", "scenarios", "dialogues", "exercises"]);
+export const ORDERABLE_ENTITIES = new Set<AdminEntityKey>([
+  "paths",
+  "courses",
+  "modules",
+  "lessons",
+  "lesson-blocks",
+  "scenarios",
+  "dialogues",
+  "dialogue-lines",
+  "exercises",
+  "exercise-options",
+  "tags",
+  "premium-packs"
+]);
+export const ACCESS_FILTER_ENTITIES = new Set<AdminEntityKey>(["paths", "courses", "modules", "lessons", "vocabulary", "grammar", "scenarios", "dialogues", "exercises", "example-sentences"]);
 export const TOPIC_FILTER_ENTITIES = new Set<AdminEntityKey>(["lessons", "vocabulary", "scenarios", "exercises"]);
 export const LEVEL_FILTER_ENTITIES = new Set<AdminEntityKey>(["paths", "modules", "lessons", "vocabulary", "grammar", "scenarios", "exercises"]);
 export const HEALTH_FILTER_ENTITIES = new Set<AdminEntityKey>(["audio-assets"]);
@@ -43,6 +70,10 @@ export const SORT_OPTIONS: Record<AdminEntityKey, Array<{ value: string; label: 
     { value: "order_index", label: "Order" },
     { value: "updated_at", label: "Updated" },
   ],
+  "lesson-blocks": [
+    { value: "order_index", label: "Order" },
+    { value: "updated_at", label: "Updated" },
+  ],
   vocabulary: [
     { value: "korean", label: "Korean" },
     { value: "updated_at", label: "Updated" },
@@ -59,7 +90,15 @@ export const SORT_OPTIONS: Record<AdminEntityKey, Array<{ value: string; label: 
     { value: "order_index", label: "Order" },
     { value: "updated_at", label: "Updated" },
   ],
+  "dialogue-lines": [
+    { value: "order_index", label: "Order" },
+    { value: "updated_at", label: "Updated" },
+  ],
   exercises: [
+    { value: "order_index", label: "Order" },
+    { value: "updated_at", label: "Updated" },
+  ],
+  "exercise-options": [
     { value: "order_index", label: "Order" },
     { value: "updated_at", label: "Updated" },
   ],

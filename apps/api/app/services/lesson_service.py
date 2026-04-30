@@ -17,9 +17,9 @@ from app.services.curriculum_service import (
     sync_guided_progress,
 )
 from app.services.audio_service import listening_exercise
-from app.services.exercise_evaluator import evaluate_exercise
+from app.services.exercise_evaluator import evaluate_exercise_submission
 from app.services.premium import require_content_access
-from app.services.review_service import get_or_create_review_item
+from app.services.review_service import build_review_overview, get_or_create_review_item
 from app.services.user_service import update_study_activity
 
 
@@ -103,7 +103,8 @@ def submit_exercise(db: Session, user: User, exercise_id: int, answer: Any, less
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
     require_content_access(db, user, exercise.is_premium or listening_exercise(exercise))
 
-    is_correct = evaluate_exercise(exercise, answer)
+    evaluation = evaluate_exercise_submission(exercise, answer)
+    is_correct = evaluation.is_correct
     lesson_completed = False
     xp_awarded = 2 if is_correct else 0
 
@@ -111,6 +112,10 @@ def submit_exercise(db: Session, user: User, exercise_id: int, answer: Any, less
         get_or_create_review_item(db, user, "exercise", exercise.id, exercise.lesson_id)
     else:
         get_or_create_review_item(db, user, "exercise", exercise.id, exercise.lesson_id, wrong=True)
+    if exercise.vocabulary_id:
+        get_or_create_review_item(db, user, "vocabulary", exercise.vocabulary_id, exercise.lesson_id, wrong=not is_correct)
+    if exercise.grammar_point_id:
+        get_or_create_review_item(db, user, "grammar", exercise.grammar_point_id, exercise.lesson_id, wrong=not is_correct)
 
     if is_correct and lesson_id:
         last_exercise = (
@@ -131,12 +136,19 @@ def submit_exercise(db: Session, user: User, exercise_id: int, answer: Any, less
         "exercise_completed",
         user.telegram_id,
         user.interface_language,
-        {"exercise_id": exercise.id, "exercise_type": exercise.exercise_type, "lesson_id": exercise.lesson_id, "is_correct": is_correct},
+        {
+            "exercise_id": exercise.id,
+            "exercise_type": exercise.exercise_type,
+            "lesson_id": exercise.lesson_id,
+            "is_correct": is_correct,
+            "validator": evaluation.validator,
+        },
     )
     return {
         "is_correct": is_correct,
         "expected": exercise.answer_key.get("value"),
         "explanation": exercise.explanation,
+        "validator": evaluation.validator,
         "lesson_completed": lesson_completed,
         "xp_awarded": xp_awarded,
     }
@@ -185,6 +197,7 @@ def progress_summary(db: Session, user: User) -> dict[str, Any]:
         .limit(5)
         .all()
     )
+    review_overview = build_review_overview(db, user)
     last_completed_progress = (
         db.query(LessonProgress)
         .filter(LessonProgress.user_id == user.id, LessonProgress.status == "completed", LessonProgress.completed_at.is_not(None))
@@ -214,4 +227,5 @@ def progress_summary(db: Session, user: User) -> dict[str, Any]:
         "current_lesson": serialize_lesson_reference(db, user, get_settings(), current_lesson) if current_lesson else None,
         "last_completed_lesson": {"id": last_completed_lesson.id, "title": last_completed_lesson.title, "slug": last_completed_lesson.slug} if last_completed_lesson else None,
         "difficult_topics": [{"topic": row[0]} for row in difficult_topics],
+        "review_overview": review_overview,
     }

@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.models.schema import Dialogue, ExampleSentence, Exercise, ExerciseOption, GrammarPoint, Lesson, LocalizationEntry, Module, Scenario, Vocabulary
+from app.services.localization_catalog import sync_catalog_entries
 
 
 def loc(ru: str, uz: str, en: str) -> dict[str, str]:
@@ -497,6 +498,8 @@ def _scenario_request(topic: str) -> str:
 
 
 def _ensure_localization(db: Session) -> None:
+    sync_catalog_entries(db)
+    return
     entries = {
         "bot.menu": loc("Главное меню", "Asosiy menyu", "Main menu"),
         "bot.lesson": loc("Продолжить урок", "Darsni davom ettirish", "Continue lesson"),

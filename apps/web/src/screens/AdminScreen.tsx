@@ -2,39 +2,54 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
+  ChevronRight,
   CheckCircle2,
   Copy,
   Download,
   Eye,
   FileUp,
   Filter,
+  FolderKanban,
   Globe,
+  History,
+  LayoutDashboard,
+  ListTodo,
   Plus,
   RefreshCcw,
+  Rows3,
   Save,
   Search,
   ShieldCheck,
   Sparkles,
+  TriangleAlert,
   Trash2,
   Upload
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { ACCESS_FILTER_ENTITIES, CORE_ENTITIES, ENTITY_LABELS, HEALTH_FILTER_ENTITIES, LEVEL_FILTER_ENTITIES, ORDERABLE_ENTITIES, SORT_OPTIONS, SUPPORT_ENTITIES, TOPIC_FILTER_ENTITIES } from "../admin/config";
 import { AudioPlayer } from "../components/ui";
+import { useI18n } from "../lib/i18n";
 import type {
   AdminEntityKey,
   AdminFilters,
   AdminRow,
+  AuditTrailItem,
+  AuditTrailResponse,
   DashboardSummary,
   ImportResult,
   PreviewResponse,
+  PublishQueueItem,
+  PublishQueueResponse,
   RelationOption,
   RelationOptionsMap,
+  ValidationCenterItem,
+  ValidationCenterResponse,
   ValidationIssue,
   ValidationResult
 } from "../admin/types";
 import { blankBlock, blankDialogue, blankDialogueLine, blankEntity, blankExerciseOption, blankLessonAsset, deepClone, joinLines, joinTags, localized, moveItem, parseLines, parseTags, slugify, withOrder } from "../admin/utils";
 import { api } from "../lib/api";
+import type { AuthUser } from "../types";
 
 const STATUS_OPTIONS = ["draft", "published", "archived"];
 const ACCESS_OPTIONS = ["free", "hidden", "internal", "inherit"] as const;
@@ -67,17 +82,53 @@ const defaultFilters: AdminFilters = {
   sort_dir: "asc"
 };
 
-type Mode = "content" | "io";
+type AdminSection = "overview" | "content" | "queue" | "issues" | "localization" | "import-export" | "audit";
+type ToastTone = "success" | "error" | "info";
 
-export function AdminScreen() {
+type ToastMessage = {
+  id: number;
+  tone: ToastTone;
+  text: string;
+};
+
+type SavedFilterPreset = {
+  id: string;
+  label: string;
+  entity: AdminEntityKey;
+  filters: AdminFilters;
+};
+
+type AdminRouteState = {
+  section: AdminSection;
+  entity?: AdminEntityKey;
+  itemId?: number | "new" | null;
+};
+
+const ADMIN_ROUTE_SECTIONS: Array<{ section: AdminSection; label: string; icon: typeof LayoutDashboard; description: string }> = [
+  { section: "overview", label: "Overview", icon: LayoutDashboard, description: "Health and content metrics" },
+  { section: "content", label: "Content", icon: FolderKanban, description: "Entity managers and editors" },
+  { section: "queue", label: "Publish Queue", icon: ListTodo, description: "Drafts ready for publish" },
+  { section: "issues", label: "Validation", icon: TriangleAlert, description: "Blocking issues and warnings" },
+  { section: "localization", label: "Localization", icon: Globe, description: "Translation coverage and gaps" },
+  { section: "import-export", label: "Import / Export", icon: Rows3, description: "Packages, templates, and dry-runs" },
+  { section: "audit", label: "Audit Trail", icon: History, description: "Change history and admin activity" }
+];
+
+const SAVED_FILTERS_STORAGE_KEY = "adminSavedFilters.v1";
+const AUTOSAVE_ENABLED_STORAGE_KEY = "adminAutosaveEnabled.v1";
+
+export function AdminScreen({ user: _user }: { user: AuthUser }) {
+  const { admin } = useI18n();
   const [email, setEmail] = useState(localStorage.getItem("adminEmail") || "admin@example.com");
   const [password, setPassword] = useState("");
   const [token, setToken] = useState(localStorage.getItem("adminAccessToken") || "");
-  const [entity, setEntity] = useState<AdminEntityKey>("lessons");
-  const [mode, setMode] = useState<Mode>("content");
+  const [adminRoute, setAdminRoute] = useState<AdminRouteState>(() => parseAdminRoute());
+  const [entity, setEntity] = useState<AdminEntityKey>(() => parseAdminRoute().entity || "lessons");
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
   const [options, setOptions] = useState<RelationOptionsMap>({});
   const [filters, setFilters] = useState<AdminFilters>(defaultFilters);
+  const [savedFilters, setSavedFilters] = useState<SavedFilterPreset[]>(() => loadSavedFilters());
+  const [autosaveEnabled, setAutosaveEnabled] = useState<boolean>(() => localStorage.getItem(AUTOSAVE_ENABLED_STORAGE_KEY) !== "false");
   const [items, setItems] = useState<AdminRow[]>([]);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -85,7 +136,7 @@ export function AdminScreen() {
   const [isNew, setIsNew] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [importEntity, setImportEntity] = useState<AdminEntityKey>("lessons");
@@ -94,8 +145,23 @@ export function AdminScreen() {
   const [importConflict, setImportConflict] = useState("skip");
   const [importContent, setImportContent] = useState("");
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [publishQueue, setPublishQueue] = useState<PublishQueueResponse | null>(null);
+  const [validationCenterData, setValidationCenterData] = useState<ValidationCenterResponse | null>(null);
+  const [auditTrailData, setAuditTrailData] = useState<AuditTrailResponse | null>(null);
+  const [queueSearch, setQueueSearch] = useState("");
+  const [queueEntityFilter, setQueueEntityFilter] = useState("");
+  const [issuesSearch, setIssuesSearch] = useState("");
+  const [issuesEntityFilter, setIssuesEntityFilter] = useState("");
+  const [issuesLevel, setIssuesLevel] = useState("");
+  const [auditAction, setAuditAction] = useState("");
+  const [auditSearchEntity, setAuditSearchEntity] = useState("");
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [missingLocalization, setMissingLocalization] = useState<Array<{ namespace: string; key: string; language: string }>>([]);
 
   const entityOptions = useMemo(() => [...CORE_ENTITIES, ...SUPPORT_ENTITIES], []);
+  const currentSection = adminRoute.section;
+  const currentEntity = adminRoute.entity || entity;
+  const savedFiltersForEntity = useMemo(() => savedFilters.filter((item) => item.entity === currentEntity), [currentEntity, savedFilters]);
 
   useEffect(() => {
     if (!dirty) return undefined;
@@ -108,19 +174,153 @@ export function AdminScreen() {
   }, [dirty]);
 
   useEffect(() => {
+    const syncRoute = () => setAdminRoute(parseAdminRoute());
+    window.addEventListener("hashchange", syncRoute);
+    window.addEventListener("popstate", syncRoute);
+    return () => {
+      window.removeEventListener("hashchange", syncRoute);
+      window.removeEventListener("popstate", syncRoute);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!adminRoute.entity || adminRoute.entity === entity) return;
+    setEntity(adminRoute.entity);
+    setFilters({ ...defaultFilters, sort_by: SORT_OPTIONS[adminRoute.entity][0]?.value || "order_index" });
+  }, [adminRoute.entity, entity]);
+
+  useEffect(() => {
     if (!token) return;
     void refreshMeta();
   }, [token]);
 
   useEffect(() => {
-    if (!token || mode !== "content") return;
+    if (!token || currentSection !== "content") return;
     void refreshList();
-  }, [token, entity, filters, mode]);
+  }, [token, entity, filters, currentSection]);
+
+  useEffect(() => {
+    if (!token || currentSection !== "queue") return;
+    void loadPublishQueue();
+  }, [token, currentSection, queueSearch, queueEntityFilter]);
+
+  useEffect(() => {
+    if (!token || currentSection !== "issues") return;
+    void loadValidationCenter();
+  }, [token, currentSection, issuesSearch, issuesLevel, issuesEntityFilter]);
+
+  useEffect(() => {
+    if (!token || currentSection !== "audit") return;
+    void loadAuditTrail();
+  }, [token, currentSection, auditAction, auditSearchEntity]);
+
+  useEffect(() => {
+    if (!token || currentSection !== "localization") return;
+    setWorkspaceLoading(true);
+    api
+      .adminLocalizationMissing(token)
+      .then(setMissingLocalization)
+      .finally(() => setWorkspaceLoading(false));
+  }, [currentSection, token]);
+
+  useEffect(() => {
+    if (!token || currentSection !== "content") return;
+    if (adminRoute.entity !== entity || adminRoute.itemId === undefined) return;
+    if (adminRoute.itemId === "new") {
+      setDraft(loadAutosavedDraft(entity, null) || blankEntity(entity));
+      setSelectedId(null);
+      setValidation(null);
+      setPreview(null);
+      setIsNew(true);
+      setDirty(Boolean(loadAutosavedDraft(entity, null)));
+      return;
+    }
+    if (typeof adminRoute.itemId === "number" && adminRoute.itemId !== selectedId) {
+      void openItem(adminRoute.itemId, false, false);
+    }
+  }, [adminRoute, token, currentSection, entity, selectedId]);
+
+  useEffect(() => {
+    localStorage.setItem(AUTOSAVE_ENABLED_STORAGE_KEY, autosaveEnabled ? "true" : "false");
+  }, [autosaveEnabled]);
+
+  useEffect(() => {
+    if (!autosaveEnabled || !dirty || !draft) return undefined;
+    const timer = window.setTimeout(() => {
+      persistAutosavedDraft(entity, draft.id || null, draft);
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [autosaveEnabled, dirty, draft, entity]);
+
+  useEffect(() => {
+    if (!toasts.length) return undefined;
+    const timer = window.setTimeout(() => {
+      setToasts((current) => current.slice(1));
+    }, 3200);
+    return () => window.clearTimeout(timer);
+  }, [toasts]);
+
+  function pushToast(text: string, tone: ToastTone = "info") {
+    setToasts((current) => [...current, { id: Date.now() + current.length, tone, text }]);
+  }
+
+  function navigateAdmin(next: AdminRouteState, options?: { replace?: boolean; allowDirty?: boolean }) {
+    if (dirty && !options?.allowDirty && !window.confirm("Discard unsaved changes?")) {
+      return false;
+    }
+    const hash = serializeAdminRoute(next);
+    const url = `${window.location.pathname}${window.location.search}${hash}`;
+    if (options?.replace) {
+      history.replaceState(null, "", url);
+    } else {
+      history.pushState(null, "", url);
+    }
+    setAdminRoute(next);
+    return true;
+  }
+
+  async function runAdminTask(action: () => Promise<void>, options?: { success?: string; error?: string }) {
+    try {
+      await action();
+      if (options?.success) {
+        pushToast(options.success, "success");
+      }
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : options?.error || "Admin action failed.", "error");
+    }
+  }
 
   async function refreshMeta() {
     const [dashboardData, optionData] = await Promise.all([api.adminDashboard(token), api.adminContentOptions(token)]);
     setDashboard(dashboardData);
     setOptions(optionData);
+  }
+
+  async function loadPublishQueue() {
+    setWorkspaceLoading(true);
+    try {
+      setPublishQueue(await api.adminPublishQueue(token, { q: queueSearch || undefined, entity: queueEntityFilter || undefined }));
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  }
+
+  async function loadValidationCenter() {
+    setWorkspaceLoading(true);
+    try {
+      setValidationCenterData(await api.adminValidationIssues(token, { q: issuesSearch || undefined, entity: issuesEntityFilter || undefined, level: issuesLevel || undefined }));
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  }
+
+  async function loadAuditTrail() {
+    setWorkspaceLoading(true);
+    try {
+      setAuditTrailData(await api.adminAuditTrail(token, { entity: auditSearchEntity || undefined, action: auditAction || undefined }));
+    } finally {
+      setWorkspaceLoading(false);
+    }
   }
 
   async function refreshList(preferredId?: number | null) {
@@ -133,7 +333,7 @@ export function AdminScreen() {
         return;
       }
       if (!isNew && response.items[0]?.id) {
-        await openItem(response.items[0].id as number, false);
+        await openItem(response.items[0].id as number, false, false);
       } else if (!response.items.length) {
         setDraft(null);
         setSelectedId(null);
@@ -144,29 +344,35 @@ export function AdminScreen() {
   }
 
   async function login() {
-    const response = await api.adminLogin(email, password);
-    localStorage.setItem("adminEmail", email);
-    setToken(response.access_token);
-    setMessage("Admin session ready.");
+    await runAdminTask(async () => {
+      const response = await api.adminLogin(email, password);
+      localStorage.setItem("adminEmail", email);
+      setToken(response.access_token);
+      navigateAdmin({ section: "overview", entity }, { replace: true, allowDirty: true });
+    }, { success: "Admin session ready." });
   }
 
-  async function openItem(id: number, confirmDirty = true) {
+  async function openItem(id: number, confirmDirty = true, syncRoute = true) {
     if (confirmDirty && dirty && !window.confirm("Discard unsaved changes?")) {
       return;
     }
+    if (syncRoute) {
+      const navigated = navigateAdmin({ section: "content", entity, itemId: id });
+      if (!navigated) return;
+    }
     const detail = await api.adminContentDetail(token, entity, id);
+    const autosaved = loadAutosavedDraft(entity, id);
     setSelectedId(id);
-    setDraft(normalizeDraft(entity, detail));
+    setDraft(normalizeDraft(entity, autosaved || detail));
     setValidation(null);
     setPreview(null);
-    setDirty(false);
+    setDirty(Boolean(autosaved));
     setIsNew(false);
   }
 
   function switchEntity(nextEntity: AdminEntityKey) {
-    if (dirty && !window.confirm("Discard unsaved changes?")) {
-      return;
-    }
+    const navigated = navigateAdmin({ section: "content", entity: nextEntity });
+    if (!navigated) return;
     setEntity(nextEntity);
     setFilters({ ...defaultFilters, sort_by: SORT_OPTIONS[nextEntity][0]?.value || "order_index" });
     setSelectedIds([]);
@@ -176,18 +382,17 @@ export function AdminScreen() {
     setPreview(null);
     setDirty(false);
     setIsNew(false);
-    setMode("content");
   }
 
   function createNewItem() {
-    if (dirty && !window.confirm("Discard unsaved changes?")) {
-      return;
-    }
-    setDraft(blankEntity(entity));
+    const navigated = navigateAdmin({ section: "content", entity, itemId: "new" });
+    if (!navigated) return;
+    const autosaved = loadAutosavedDraft(entity, null);
+    setDraft(autosaved || blankEntity(entity));
     setSelectedId(null);
     setValidation(null);
     setPreview(null);
-    setDirty(false);
+    setDirty(Boolean(autosaved));
     setIsNew(true);
   }
 
@@ -201,30 +406,38 @@ export function AdminScreen() {
     setSelectedId(saved.id || null);
     setDirty(false);
     setIsNew(false);
-    setMessage(`${ENTITY_LABELS[entity]} saved.`);
+    clearAutosavedDraft(entity, draft.id || null);
+    clearAutosavedDraft(entity, null);
     await refreshMeta();
     await refreshList(saved.id || null);
+    navigateAdmin({ section: "content", entity, itemId: saved.id || null }, { replace: true, allowDirty: true });
+    pushToast(`${ENTITY_LABELS[entity]} saved.`, "success");
   }
 
   async function duplicateCurrent() {
     if (!draft?.id) return;
     const cloned = await api.adminDuplicateContent(token, entity, draft.id);
-    setMessage(`${ENTITY_LABELS[entity]} duplicated.`);
     await refreshMeta();
     await refreshList(cloned.id || null);
-    if (cloned.id) await openItem(Number(cloned.id), false);
+    if (cloned.id) {
+      navigateAdmin({ section: "content", entity, itemId: Number(cloned.id) }, { allowDirty: true });
+      await openItem(Number(cloned.id), false, false);
+    }
+    pushToast(`${ENTITY_LABELS[entity]} duplicated.`, "success");
   }
 
   async function deleteCurrent() {
     if (!draft?.id || !window.confirm(`Delete this ${ENTITY_LABELS[entity].toLowerCase()}?`)) return;
     await api.adminDeleteContent(token, entity, draft.id);
-    setMessage(`${ENTITY_LABELS[entity]} archived.`);
     setDraft(null);
     setSelectedId(null);
     setDirty(false);
     setIsNew(false);
+    clearAutosavedDraft(entity, draft.id);
     await refreshMeta();
     await refreshList();
+    navigateAdmin({ section: "content", entity }, { replace: true, allowDirty: true });
+    pushToast(`${ENTITY_LABELS[entity]} archived.`, "success");
   }
 
   async function validateCurrent() {
@@ -232,12 +445,12 @@ export function AdminScreen() {
     const payload = buildPayload(entity, draft);
     const result = await api.adminValidateContent(token, entity, payload);
     setValidation(result);
-    setMessage(result.valid ? "Validation passed." : "Validation returned issues.");
+    pushToast(result.valid ? "Validation passed." : "Validation returned issues.", result.valid ? "success" : "info");
   }
 
   async function previewCurrent() {
     if (!draft?.id) {
-      setMessage("Save the item before previewing.");
+      pushToast("Save the item before previewing.", "info");
       return;
     }
     const result = await api.adminPreviewContent(token, entity, draft.id, "free");
@@ -254,11 +467,12 @@ export function AdminScreen() {
       const result = await api.adminPublishContent(token, entity, Number(draft.id || selectedId));
       setDraft(normalizeDraft(entity, result));
       setDirty(false);
-      setMessage(`${ENTITY_LABELS[entity]} published.`);
+      clearAutosavedDraft(entity, result.id || null);
       await refreshMeta();
       await refreshList(result.id || null);
+      pushToast(`${ENTITY_LABELS[entity]} published.`, "success");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Publish failed.");
+      pushToast(error instanceof Error ? error.message : "Publish failed.", "error");
       await validateCurrent();
     }
   }
@@ -268,26 +482,28 @@ export function AdminScreen() {
     const result = await api.adminUnpublishContent(token, entity, draft.id);
     setDraft(normalizeDraft(entity, result));
     setDirty(false);
-    setMessage(`${ENTITY_LABELS[entity]} moved to draft.`);
     await refreshMeta();
     await refreshList(result.id || null);
+    pushToast(`${ENTITY_LABELS[entity]} moved to draft.`, "success");
   }
 
   async function runBulk(status?: string, access_state?: string) {
     if (!selectedIds.length) return;
+    const label = status ? `status=${status}` : access_state ? `access=${access_state}` : "bulk update";
+    if (!window.confirm(`Apply ${label} to ${selectedIds.length} ${ENTITY_LABELS[entity].toLowerCase()} items?`)) return;
     await api.adminBulkContentState(token, { entity, ids: selectedIds, status, access_state });
-    setMessage(`Updated ${selectedIds.length} ${ENTITY_LABELS[entity].toLowerCase()} items.`);
     setSelectedIds([]);
     await refreshMeta();
     await refreshList(selectedId);
+    pushToast(`Updated ${selectedIds.length} ${ENTITY_LABELS[entity].toLowerCase()} items.`, "success");
   }
 
   async function reorderVisible(from: number, to: number) {
     const ordered = moveItem(items, from, to);
     setItems(ordered);
     await api.adminReorderContent(token, entity, ordered.map((item) => Number(item.id)).filter(Boolean));
-    setMessage(`${ENTITY_LABELS[entity]} order updated.`);
     await refreshList(selectedId);
+    pushToast(`${ENTITY_LABELS[entity]} order updated.`, "success");
   }
 
   async function exportCurrent(format: "json" | "csv") {
@@ -308,10 +524,10 @@ export function AdminScreen() {
       conflict_strategy: importConflict
     });
     setImportResult(result);
-    setMessage(importDryRun ? "Import dry-run complete." : "Import applied.");
+    pushToast(importDryRun ? "Import dry-run complete." : "Import applied.", "success");
     if (!importDryRun) {
       await refreshMeta();
-      if (importEntity === entity && mode === "content") {
+      if (importEntity === entity && currentSection === "content") {
         await refreshList(selectedId);
       }
     }
@@ -328,6 +544,368 @@ export function AdminScreen() {
     setImportContent(await file.text());
   }
 
+  function saveCurrentFilterPreset() {
+    const label = window.prompt("Saved filter name");
+    if (!label) return;
+    const nextPreset: SavedFilterPreset = {
+      id: `${entity}-${Date.now()}`,
+      label,
+      entity,
+      filters,
+    };
+    const next = [...savedFilters.filter((item) => item.id !== nextPreset.id), nextPreset];
+    setSavedFilters(next);
+    persistSavedFilters(next);
+    pushToast("Filter saved.", "success");
+  }
+
+  function applySavedFilterPreset(preset: SavedFilterPreset) {
+    setFilters(preset.filters);
+    pushToast(`Applied filter: ${preset.label}`, "info");
+  }
+
+  function removeSavedFilterPreset(presetId: string) {
+    const next = savedFilters.filter((item) => item.id !== presetId);
+    setSavedFilters(next);
+    persistSavedFilters(next);
+    pushToast("Saved filter removed.", "info");
+  }
+
+  const routeSections = ADMIN_ROUTE_SECTIONS.map((item) => ({
+    ...item,
+    label: admin(`section.${item.section}.label`, item.label),
+    description: admin(`section.${item.section}.description`, item.description),
+  }));
+  const sectionMeta = routeSections.find((item) => item.section === currentSection) || routeSections[0];
+
+  return (
+    <div className="space-y-4">
+      {!token ? (
+        <section className="rounded-app border border-line bg-white p-4">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-app bg-leaf/10 text-leaf">
+              <ShieldCheck size={20} />
+            </div>
+            <div>
+              <h2 className="font-semibold">{admin("login.title", "Admin login")}</h2>
+              <p className="text-sm text-ink/60">{admin("login.description", "Content operations require an admin session.")}</p>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <input className="h-11 rounded-app border border-line bg-panel px-3" value={email} onChange={(event) => setEmail(event.target.value)} placeholder={admin("login.email", "Email")} />
+            <input className="h-11 rounded-app border border-line bg-panel px-3" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={admin("login.password", "Password")} />
+          </div>
+          <button type="button" onClick={() => void login()} className="mt-4 h-11 rounded-app bg-leaf px-4 font-medium text-white">{admin("login.submit", "Login")}</button>
+        </section>
+      ) : (
+        <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)]">
+          <aside className="space-y-4">
+            <section className="rounded-app border border-line bg-white p-4">
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-ink/45">{admin("workspace.title", "Admin CMS")}</p>
+              <h2 className="mt-2 text-lg font-semibold">{admin("workspace.subtitle", "Content control center")}</h2>
+              <p className="mt-1 text-sm text-ink/60">{admin("workspace.description", "Professional workspace for content editing, publish ops, validation, and audit history.")}</p>
+            </section>
+            <nav className="rounded-app border border-line bg-white p-2">
+              {routeSections.map((item) => {
+                const Icon = item.icon;
+                const active = currentSection === item.section;
+                return (
+                  <button
+                    key={item.section}
+                    type="button"
+                    onClick={() => navigateAdmin(item.section === "content" ? { section: "content", entity } : { section: item.section })}
+                    className={`mb-2 flex w-full items-start gap-3 rounded-app px-3 py-3 text-left ${active ? "bg-leaf text-white" : "bg-white text-ink hover:bg-panel"}`}
+                  >
+                    <Icon size={18} className="mt-0.5 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium">{item.label}</span>
+                      <span className={`block text-xs ${active ? "text-white/75" : "text-ink/55"}`}>{item.description}</span>
+                    </span>
+                    <ChevronRight size={16} className={active ? "text-white/80" : "text-ink/30"} />
+                  </button>
+                );
+              })}
+            </nav>
+            {dashboard ? <AdminSidebarStats dashboard={dashboard} /> : null}
+          </aside>
+
+          <main className="space-y-4">
+            <section className="flex flex-wrap items-center justify-between gap-3 rounded-app border border-line bg-white p-4">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.2em] text-ink/45">{sectionMeta.label}</p>
+                <h3 className="text-xl font-semibold">{sectionMeta.description}</h3>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {currentSection === "content" ? (
+                  <label className="flex items-center gap-2 rounded-app border border-line bg-panel px-3 py-2 text-sm text-ink/70">
+                    <input type="checkbox" checked={autosaveEnabled} onChange={(event) => setAutosaveEnabled(event.target.checked)} />
+                    {admin("autosave", "Autosave drafts")}
+                  </label>
+                ) : null}
+                <button type="button" onClick={() => void runAdminTask(refreshMeta, { success: "Dashboard refreshed." })} className="flex h-10 items-center gap-2 rounded-app border border-line bg-white px-4 text-sm">
+                  <RefreshCcw size={16} />
+                  {admin("refresh", "Refresh")}
+                </button>
+              </div>
+            </section>
+
+            {currentSection === "overview" ? (
+              <>
+                {dashboard ? <DashboardGrid dashboard={dashboard} /> : null}
+                {dashboard ? <AdminOverviewPanel dashboard={dashboard} /> : null}
+              </>
+            ) : null}
+
+            {currentSection === "import-export" ? (
+              <ImportExportPanel
+                entity={importEntity}
+                format={importFormat}
+                dryRun={importDryRun}
+                conflict={importConflict}
+                content={importContent}
+                result={importResult}
+                onEntityChange={setImportEntity}
+                onFormatChange={setImportFormat}
+                onDryRunChange={setImportDryRun}
+                onConflictChange={setImportConflict}
+                onContentChange={setImportContent}
+                onImport={() => void runAdminTask(executeImport)}
+                onTemplateDownload={(format) => void runAdminTask(() => downloadTemplate(format))}
+                onFileChange={onImportFile}
+              />
+            ) : null}
+
+            {currentSection === "queue" ? (
+              <PublishQueuePanel
+                loading={workspaceLoading}
+                entityFilter={queueEntityFilter}
+                entityOptions={entityOptions}
+                items={publishQueue?.items || []}
+                q={queueSearch}
+                onEntityFilterChange={setQueueEntityFilter}
+                onSearchChange={setQueueSearch}
+                onOpen={(item) => {
+                  if (item.entity in ENTITY_LABELS) {
+                    navigateAdmin({ section: "content", entity: item.entity as AdminEntityKey, itemId: item.entity_id });
+                  }
+                }}
+              />
+            ) : null}
+
+            {currentSection === "issues" ? (
+              <ValidationCenterPanel
+                loading={workspaceLoading}
+                entityFilter={issuesEntityFilter}
+                entityOptions={entityOptions}
+                items={validationCenterData?.items || []}
+                level={issuesLevel}
+                q={issuesSearch}
+                onEntityFilterChange={setIssuesEntityFilter}
+                onLevelChange={setIssuesLevel}
+                onSearchChange={setIssuesSearch}
+                onOpen={(item) => {
+                  if (item.entity in ENTITY_LABELS) {
+                    navigateAdmin({ section: "content", entity: item.entity as AdminEntityKey, itemId: item.entity_id });
+                  }
+                }}
+              />
+            ) : null}
+
+            {currentSection === "audit" ? (
+              <AuditTrailPanel
+                loading={workspaceLoading}
+                action={auditAction}
+                entity={auditSearchEntity}
+                entityOptions={entityOptions}
+                items={auditTrailData?.items || []}
+                onActionChange={setAuditAction}
+                onEntityChange={setAuditSearchEntity}
+              />
+            ) : null}
+
+            {currentSection === "localization" ? (
+              <LocalizationCoveragePanel
+                admin={admin}
+                items={missingLocalization}
+                loading={workspaceLoading}
+                onOpen={() => navigateAdmin({ section: "content", entity: "localization" })}
+              />
+            ) : null}
+
+            {currentSection === "content" ? (
+              <>
+                <section className="flex flex-wrap gap-2">
+                  {CORE_ENTITIES.map((item) => (
+                    <button key={item} type="button" onClick={() => switchEntity(item)} className={`h-10 rounded-app px-3 text-sm ${entity === item ? "bg-leaf text-white" : "border border-line bg-white"}`}>
+                      {ENTITY_LABELS[item]}
+                    </button>
+                  ))}
+                </section>
+                <section className="flex flex-wrap gap-2">
+                  {SUPPORT_ENTITIES.map((item) => (
+                    <button key={item} type="button" onClick={() => switchEntity(item)} className={`h-9 rounded-app px-3 text-sm ${entity === item ? "bg-sky text-white" : "border border-line bg-white"}`}>
+                      {ENTITY_LABELS[item]}
+                    </button>
+                  ))}
+                </section>
+
+                <SavedFiltersPanel presets={savedFiltersForEntity} onApply={applySavedFilterPreset} onRemove={removeSavedFilterPreset} onSave={saveCurrentFilterPreset} />
+                <FilterBar entity={entity} filters={filters} onChange={setFilters} />
+
+                <section className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_360px]">
+                  <div className="space-y-3">
+                    <div className="rounded-app border border-line bg-white p-3">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                          <h3 className="font-semibold">{ENTITY_LABELS[entity]}</h3>
+                          <p className="text-xs text-ink/55">{items.length} visible</p>
+                        </div>
+                        <button type="button" onClick={createNewItem} className="flex h-10 items-center gap-2 rounded-app bg-leaf px-3 text-sm font-medium text-white">
+                          <Plus size={16} />
+                          New
+                        </button>
+                      </div>
+                      <div className="mb-3 flex flex-wrap gap-2">
+                        <button type="button" onClick={() => void runAdminTask(() => runBulk("published", undefined))} className="rounded-app border border-line px-2 py-2 text-xs">Publish selected</button>
+                        <button type="button" onClick={() => void runAdminTask(() => runBulk("draft", undefined))} className="rounded-app border border-line px-2 py-2 text-xs">Draft selected</button>
+                        <button type="button" onClick={() => void runAdminTask(() => runBulk(undefined, "free"))} className="rounded-app border border-line px-2 py-2 text-xs">Set free</button>
+                        <button type="button" onClick={() => void runAdminTask(() => runBulk(undefined, "hidden"))} className="rounded-app border border-line px-2 py-2 text-xs">Hide selected</button>
+                      </div>
+                      <div className="mb-3 flex gap-2">
+                        <button type="button" onClick={() => void runAdminTask(() => exportCurrent("json"))} className="flex h-10 items-center gap-2 rounded-app border border-line bg-panel px-3 text-sm">
+                          <Download size={16} />
+                          JSON
+                        </button>
+                        {entity === "vocabulary" || entity === "grammar" ? (
+                          <button type="button" onClick={() => void runAdminTask(() => exportCurrent("csv"))} className="flex h-10 items-center gap-2 rounded-app border border-line bg-panel px-3 text-sm">
+                            <Download size={16} />
+                            CSV
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="max-h-[70vh] overflow-y-auto">
+                        {loading ? <p className="text-sm text-ink/55">Loading...</p> : null}
+                        {items.map((item, index) => (
+                          <div key={String(item.id)} className={`mb-2 rounded-app border p-2 ${selectedId === item.id && !isNew ? "border-leaf bg-leaf/5" : "border-line bg-panel/40"}`}>
+                            <div className="flex items-start gap-2">
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.includes(Number(item.id))}
+                                onChange={(event) => {
+                                  const id = Number(item.id);
+                                  setSelectedIds((current) => event.target.checked ? [...current, id] : current.filter((value) => value !== id));
+                                }}
+                              />
+                              <button type="button" onClick={() => void runAdminTask(() => openItem(Number(item.id)))} className="min-w-0 flex-1 text-left">
+                                <p className="truncate text-sm font-medium">{String(item.display_label || item.slug || item.key || item.id)}</p>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  <Badge tone="neutral">{String(item.status || "draft")}</Badge>
+                                  {item.resolved_access_state ? <Badge tone={item.resolved_access_state === "premium" ? "sun" : "neutral"}>{formatAccessState(item.resolved_access_state)}</Badge> : null}
+                                  {entity === "audio-assets" && item.health?.state ? <Badge tone={item.health.state === "broken" || item.health.state === "missing" ? "coral" : item.health.state === "disabled" ? "sun" : "leaf"}>{String(item.health.state)}</Badge> : null}
+                                </div>
+                              </button>
+                              {ORDERABLE_ENTITIES.has(entity) ? (
+                                <div className="flex flex-col gap-1">
+                                  <button type="button" disabled={index === 0} onClick={() => void runAdminTask(() => reorderVisible(index, index - 1))} className="rounded-app border border-line bg-white p-1 disabled:opacity-40">
+                                    <ArrowUp size={14} />
+                                  </button>
+                                  <button type="button" disabled={index === items.length - 1} onClick={() => void runAdminTask(() => reorderVisible(index, index + 1))} className="rounded-app border border-line bg-white p-1 disabled:opacity-40">
+                                    <ArrowDown size={14} />
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="rounded-app border border-line bg-white p-4">
+                      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <h3 className="font-semibold">{isNew ? `New ${ENTITY_LABELS[entity].slice(0, -1)}` : draft?.display_label || ENTITY_LABELS[entity]}</h3>
+                          <p className="text-sm text-ink/55">{dirty ? "Unsaved changes" : "Saved state"}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button type="button" onClick={() => void runAdminTask(validateCurrent)} className="flex h-10 items-center gap-2 rounded-app border border-line bg-white px-3 text-sm">
+                            <CheckCircle2 size={16} />
+                            Validate
+                          </button>
+                          <button type="button" onClick={() => void runAdminTask(previewCurrent)} className="flex h-10 items-center gap-2 rounded-app border border-line bg-white px-3 text-sm">
+                            <Eye size={16} />
+                            Preview
+                          </button>
+                          <button type="button" onClick={() => void runAdminTask(saveCurrent)} className="flex h-10 items-center gap-2 rounded-app bg-leaf px-3 text-sm font-medium text-white">
+                            <Save size={16} />
+                            Save
+                          </button>
+                        </div>
+                      </div>
+
+                      {draft ? (
+                        <div className="space-y-4">
+                          <div className="flex flex-wrap gap-2">
+                            {!isNew ? (
+                              <>
+                                <button type="button" onClick={() => void runAdminTask(duplicateCurrent)} className="flex h-10 items-center gap-2 rounded-app border border-line bg-panel px-3 text-sm">
+                                  <Copy size={16} />
+                                  Duplicate
+                                </button>
+                                <button type="button" onClick={() => void runAdminTask(publishCurrent)} className="flex h-10 items-center gap-2 rounded-app border border-line bg-panel px-3 text-sm">
+                                  <Sparkles size={16} />
+                                  Publish
+                                </button>
+                                <button type="button" onClick={() => void runAdminTask(unpublishCurrent)} className="flex h-10 items-center gap-2 rounded-app border border-line bg-panel px-3 text-sm">
+                                  <RefreshCcw size={16} />
+                                  Draft
+                                </button>
+                                <button type="button" onClick={() => void runAdminTask(deleteCurrent)} className="flex h-10 items-center gap-2 rounded-app border border-line bg-panel px-3 text-sm text-coral">
+                                  <Trash2 size={16} />
+                                  Archive
+                                </button>
+                              </>
+                            ) : null}
+                          </div>
+                          <EntityEditor entity={entity} draft={draft} options={options} token={token} onChange={updateDraft} />
+                        </div>
+                      ) : (
+                        <div className="rounded-app border border-line bg-panel p-6 text-center text-sm text-ink/55">Select an item or create a new one.</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="rounded-app border border-line bg-white p-4">
+                      <div className="mb-3 flex items-center justify-between gap-2">
+                        <div>
+                          <h3 className="font-semibold">Learner preview</h3>
+                          <p className="text-sm text-ink/55">Shows the current free learner view and flags legacy gated content.</p>
+                        </div>
+                        <Badge tone="leaf">Free curriculum</Badge>
+                      </div>
+                      {preview ? <PreviewPanel preview={preview} /> : <p className="text-sm text-ink/55">Preview a saved item to inspect learner-facing output.</p>}
+                    </div>
+                    <div className="rounded-app border border-line bg-white p-4">
+                      <div className="mb-3">
+                        <h3 className="font-semibold">Validation</h3>
+                        <p className="text-sm text-ink/55">Publishing rules and warnings.</p>
+                      </div>
+                      {validation ? <ValidationPanel validation={validation} /> : <p className="text-sm text-ink/55">Run validation on the current draft.</p>}
+                    </div>
+                  </div>
+                </section>
+              </>
+            ) : null}
+          </main>
+        </div>
+      )}
+      <ToastStack toasts={toasts} />
+    </div>
+  );
+
+  /*
   return (
     <div className="space-y-4">
       {!token ? (
@@ -556,6 +1134,123 @@ export function AdminScreen() {
       ) : null}
     </div>
   );
+  */
+}
+
+function LocalizationCoveragePanel({
+  admin,
+  items,
+  loading,
+  onOpen,
+}: {
+  admin: (key: string, fallback?: string) => string;
+  items: Array<{ namespace: string; key: string; language: string }>;
+  loading: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <section className="space-y-4">
+      <section className="rounded-app border border-line bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.2em] text-ink/45">{admin("missing.title", "Missing translations")}</p>
+            <h3 className="mt-1 text-lg font-semibold">{admin("missing.description", "These keys or languages are missing from published localization entries.")}</h3>
+          </div>
+          <button type="button" onClick={onOpen} className="rounded-app border border-line bg-panel px-3 py-2 text-sm">
+            {admin("missing.open_content", "Open localization")}
+          </button>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-app border border-line bg-white">
+        <div className="grid grid-cols-[1fr_1.5fr_120px] gap-3 border-b border-line bg-panel/50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-ink/55">
+          <span>{admin("missing.namespace", "Namespace")}</span>
+          <span>{admin("missing.key", "Key")}</span>
+          <span>{admin("missing.language", "Language")}</span>
+        </div>
+        {loading ? <div className="px-4 py-6 text-sm text-ink/60">{admin("refresh", "Refresh")}...</div> : null}
+        {!loading && items.length === 0 ? <div className="px-4 py-6 text-sm text-ink/60">{admin("missing.empty", "All tracked keys are covered right now.")}</div> : null}
+        {!loading
+          ? items.map((item, index) => (
+              <div key={`${item.namespace}:${item.key}:${item.language}:${index}`} className="grid grid-cols-[1fr_1.5fr_120px] gap-3 border-b border-line px-4 py-3 text-sm last:border-b-0">
+                <span className="truncate">{item.namespace}</span>
+                <span className="truncate font-mono text-xs">{item.key}</span>
+                <span className="uppercase">{item.language}</span>
+              </div>
+            ))
+          : null}
+      </section>
+    </section>
+  );
+}
+
+function parseAdminRoute(): AdminRouteState {
+  const hash = window.location.hash.replace(/^#/, "");
+  const [path] = hash.split("?");
+  const segments = path.split("/").filter(Boolean);
+  if (segments[0] !== "admin") {
+    return { section: "overview", entity: "lessons" };
+  }
+  const [, section = "overview", rawEntity, rawItemId] = segments;
+  const adminSection = normalizeAdminSection(section);
+  const entity = isAdminEntityKey(rawEntity) ? rawEntity : undefined;
+  const itemId = rawItemId === "new" ? "new" : rawItemId && Number.isFinite(Number(rawItemId)) ? Number(rawItemId) : undefined;
+  return { section: adminSection, entity, itemId };
+}
+
+function normalizeAdminSection(value?: string): AdminSection {
+  if (value === "content" || value === "queue" || value === "issues" || value === "localization" || value === "import-export" || value === "audit") {
+    return value;
+  }
+  return "overview";
+}
+
+function serializeAdminRoute(route: AdminRouteState): string {
+  if (route.section === "content") {
+    const entity = route.entity || "lessons";
+    if (route.itemId === "new") return `#/admin/content/${entity}/new`;
+    if (typeof route.itemId === "number") return `#/admin/content/${entity}/${route.itemId}`;
+    return `#/admin/content/${entity}`;
+  }
+  return `#/admin/${route.section}`;
+}
+
+function isAdminEntityKey(value: unknown): value is AdminEntityKey {
+  return typeof value === "string" && value in ENTITY_LABELS;
+}
+
+function loadSavedFilters(): SavedFilterPreset[] {
+  try {
+    const raw = localStorage.getItem(SAVED_FILTERS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) as SavedFilterPreset[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistSavedFilters(value: SavedFilterPreset[]) {
+  localStorage.setItem(SAVED_FILTERS_STORAGE_KEY, JSON.stringify(value));
+}
+
+function autosaveStorageKey(entity: AdminEntityKey, itemId: number | null) {
+  return `adminDraft.${entity}.${itemId ?? "new"}`;
+}
+
+function persistAutosavedDraft(entity: AdminEntityKey, itemId: number | null, draft: AdminRow) {
+  localStorage.setItem(autosaveStorageKey(entity, itemId), JSON.stringify(draft));
+}
+
+function loadAutosavedDraft(entity: AdminEntityKey, itemId: number | null): AdminRow | null {
+  try {
+    const raw = localStorage.getItem(autosaveStorageKey(entity, itemId));
+    return raw ? JSON.parse(raw) as AdminRow : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearAutosavedDraft(entity: AdminEntityKey, itemId: number | null) {
+  localStorage.removeItem(autosaveStorageKey(entity, itemId));
 }
 
 function normalizeDraft(entity: AdminEntityKey, row: AdminRow): AdminRow {
@@ -656,6 +1351,292 @@ function DashboardGrid({ dashboard }: { dashboard: DashboardSummary }) {
         </div>
       ))}
     </section>
+  );
+}
+
+function AdminSidebarStats({ dashboard }: { dashboard: DashboardSummary }) {
+  return (
+    <section className="rounded-app border border-line bg-white p-4">
+      <h3 className="font-semibold">Operations snapshot</h3>
+      <div className="mt-3 grid gap-3">
+        <Stat label="Drafts" value={String(dashboard.overview.draft_items)} />
+        <Stat label="Ready to publish" value={String(dashboard.overview.ready_to_publish)} />
+        <Stat label="Blocked items" value={String(dashboard.overview.blocked_items)} />
+        <Stat label="Queue size" value={String(dashboard.publish_queue_total)} />
+      </div>
+    </section>
+  );
+}
+
+function AdminOverviewPanel({ dashboard }: { dashboard: DashboardSummary }) {
+  const visibleEntities = Object.entries(dashboard.by_entity);
+  return (
+    <section className="grid gap-4 xl:grid-cols-[1.3fr_0.9fr]">
+      <div className="rounded-app border border-line bg-white p-4">
+        <h3 className="font-semibold">Content health dashboard</h3>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <Stat label="Published" value={String(dashboard.overview.published_items)} />
+          <Stat label="Archived" value={String(dashboard.overview.archived_items)} />
+          <Stat label="Validation errors" value={String(dashboard.validation_issue_total)} />
+          <Stat label="Warnings" value={String(dashboard.validation_warning_total)} />
+        </div>
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="text-ink/55">
+              <tr>
+                <th className="pb-2">Entity</th>
+                <th className="pb-2">Total</th>
+                <th className="pb-2">Draft</th>
+                <th className="pb-2">Ready</th>
+                <th className="pb-2">Blocked</th>
+                <th className="pb-2">Warnings</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleEntities.map(([key, summary]) => (
+                <tr key={key} className="border-t border-line">
+                  <td className="py-2 font-medium">{ENTITY_LABELS[key as AdminEntityKey] || key}</td>
+                  <td className="py-2">{summary.total}</td>
+                  <td className="py-2">{summary.draft}</td>
+                  <td className="py-2">{summary.ready_to_publish}</td>
+                  <td className="py-2">{summary.blocked}</td>
+                  <td className="py-2">{summary.warnings}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="rounded-app border border-line bg-white p-4">
+        <h3 className="font-semibold">Audio and publish ops</h3>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-1">
+          {Object.entries(dashboard.audio_health).map(([key, value]) => (
+            <Stat key={key} label={key.replace(/_/g, " ")} value={String(value)} />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SavedFiltersPanel({
+  presets,
+  onApply,
+  onRemove,
+  onSave,
+}: {
+  presets: SavedFilterPreset[];
+  onApply: (preset: SavedFilterPreset) => void;
+  onRemove: (presetId: string) => void;
+  onSave: () => void;
+}) {
+  return (
+    <section className="rounded-app border border-line bg-white p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="font-semibold">Saved filters</h3>
+          <p className="text-sm text-ink/55">Store common search/filter combinations per entity.</p>
+        </div>
+        <button type="button" onClick={onSave} className="rounded-app border border-line bg-panel px-3 py-2 text-sm">
+          Save current filter
+        </button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {presets.length ? presets.map((preset) => (
+          <div key={preset.id} className="flex items-center gap-2 rounded-app border border-line bg-panel px-3 py-2 text-sm">
+            <button type="button" onClick={() => onApply(preset)}>{preset.label}</button>
+            <button type="button" onClick={() => onRemove(preset.id)} className="text-coral">Remove</button>
+          </div>
+        )) : <p className="text-sm text-ink/55">No saved filters for this entity yet.</p>}
+      </div>
+    </section>
+  );
+}
+
+function PublishQueuePanel({
+  loading,
+  entityFilter,
+  entityOptions,
+  items,
+  q,
+  onEntityFilterChange,
+  onSearchChange,
+  onOpen,
+}: {
+  loading: boolean;
+  entityFilter: string;
+  entityOptions: AdminEntityKey[];
+  items: PublishQueueItem[];
+  q: string;
+  onEntityFilterChange: (value: string) => void;
+  onSearchChange: (value: string) => void;
+  onOpen: (item: PublishQueueItem) => void;
+}) {
+  return (
+    <section className="rounded-app border border-line bg-white p-4">
+      <div className="grid gap-3 md:grid-cols-[1fr_220px]">
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-ink/55">Search</span>
+          <input className="h-10 w-full rounded-app border border-line bg-panel px-3 text-sm" value={q} onChange={(event) => onSearchChange(event.target.value)} placeholder="Draft label or slug" />
+        </label>
+        <SelectField label="Entity" value={entityFilter} onChange={onEntityFilterChange} options={entityOptions.map((item) => ({ value: item, label: ENTITY_LABELS[item] }))} />
+      </div>
+      <div className="mt-4 space-y-3">
+        {loading ? <p className="text-sm text-ink/55">Loading publish queue...</p> : null}
+        {!loading && !items.length ? <p className="text-sm text-ink/55">No items in the publish queue.</p> : null}
+        {items.map((item) => (
+          <button key={`${item.entity}-${item.entity_id}`} type="button" onClick={() => onOpen(item)} className="w-full rounded-app border border-line bg-panel/40 p-4 text-left">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="font-medium">{item.label}</p>
+                <p className="text-sm text-ink/55">{item.entity} #{item.entity_id}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge tone={item.ready_to_publish ? "leaf" : "coral"}>{item.ready_to_publish ? "ready" : "blocked"}</Badge>
+                <Badge tone="neutral">{`errors ${item.error_count}`}</Badge>
+                <Badge tone="sun">{`warnings ${item.warning_count}`}</Badge>
+              </div>
+            </div>
+            {item.issues[0] ? <p className="mt-2 text-sm text-ink/70">{item.issues[0].message}</p> : null}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ValidationCenterPanel({
+  loading,
+  entityFilter,
+  entityOptions,
+  items,
+  level,
+  q,
+  onEntityFilterChange,
+  onLevelChange,
+  onSearchChange,
+  onOpen,
+}: {
+  loading: boolean;
+  entityFilter: string;
+  entityOptions: AdminEntityKey[];
+  items: ValidationCenterItem[];
+  level: string;
+  q: string;
+  onEntityFilterChange: (value: string) => void;
+  onLevelChange: (value: string) => void;
+  onSearchChange: (value: string) => void;
+  onOpen: (item: ValidationCenterItem) => void;
+}) {
+  return (
+    <section className="rounded-app border border-line bg-white p-4">
+      <div className="grid gap-3 md:grid-cols-[1fr_220px_180px]">
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-ink/55">Search</span>
+          <input className="h-10 w-full rounded-app border border-line bg-panel px-3 text-sm" value={q} onChange={(event) => onSearchChange(event.target.value)} placeholder="Entity label" />
+        </label>
+        <SelectField label="Entity" value={entityFilter} onChange={onEntityFilterChange} options={entityOptions.map((item) => ({ value: item, label: ENTITY_LABELS[item] }))} />
+        <SelectField label="Severity" value={level} onChange={onLevelChange} options={[{ value: "error", label: "Errors" }, { value: "warning", label: "Warnings" }]} />
+      </div>
+      <div className="mt-4 space-y-3">
+        {loading ? <p className="text-sm text-ink/55">Loading validation center...</p> : null}
+        {!loading && !items.length ? <p className="text-sm text-ink/55">No validation issues found.</p> : null}
+        {items.map((item) => (
+          <button key={`${item.entity}-${item.entity_id}`} type="button" onClick={() => onOpen(item)} className="w-full rounded-app border border-line bg-panel/40 p-4 text-left">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="font-medium">{item.label}</p>
+                <p className="text-sm text-ink/55">{item.entity} #{item.entity_id}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge tone="coral">{`errors ${item.error_count}`}</Badge>
+                <Badge tone="sun">{`warnings ${item.warning_count}`}</Badge>
+              </div>
+            </div>
+            <ul className="mt-3 space-y-2 text-sm text-ink/70">
+              {item.issues.slice(0, 3).map((issue, index) => (
+                <li key={`${item.entity}-${item.entity_id}-${issue.code}-${index}`}>{issue.message}</li>
+              ))}
+            </ul>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AuditTrailPanel({
+  loading,
+  action,
+  entity,
+  entityOptions,
+  items,
+  onActionChange,
+  onEntityChange,
+}: {
+  loading: boolean;
+  action: string;
+  entity: string;
+  entityOptions: AdminEntityKey[];
+  items: AuditTrailItem[];
+  onActionChange: (value: string) => void;
+  onEntityChange: (value: string) => void;
+}) {
+  return (
+    <section className="rounded-app border border-line bg-white p-4">
+      <div className="grid gap-3 md:grid-cols-[220px_220px]">
+        <SelectField label="Action" value={action} onChange={onActionChange} options={[
+          { value: "create", label: "Create" },
+          { value: "update", label: "Update" },
+          { value: "delete", label: "Delete" },
+          { value: "publish", label: "Publish" },
+          { value: "unpublish", label: "Unpublish" },
+          { value: "duplicate", label: "Duplicate" },
+          { value: "import", label: "Import" },
+          { value: "export", label: "Export" },
+          { value: "upload", label: "Upload" },
+        ]} />
+        <SelectField label="Entity" value={entity} onChange={onEntityChange} options={entityOptions.map((item) => ({ value: item, label: ENTITY_LABELS[item] }))} />
+      </div>
+      <div className="mt-4 space-y-3">
+        {loading ? <p className="text-sm text-ink/55">Loading audit trail...</p> : null}
+        {!loading && !items.length ? <p className="text-sm text-ink/55">No audit entries found.</p> : null}
+        {items.map((item) => (
+          <div key={item.id} className="rounded-app border border-line bg-panel/40 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="font-medium">{item.action} {item.entity_type}{item.entity_id ? ` #${item.entity_id}` : ""}</p>
+                <p className="text-sm text-ink/55">{item.admin_email || `Admin #${item.admin_user_id || "unknown"}`}</p>
+              </div>
+              <Badge tone="neutral">{new Date(item.created_at).toLocaleString()}</Badge>
+            </div>
+            {item.request_id ? <p className="mt-2 text-xs text-ink/50">Request {item.request_id}</p> : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ToastStack({ toasts }: { toasts: ToastMessage[] }) {
+  return (
+    <div className="fixed bottom-4 right-4 z-50 flex max-w-sm flex-col gap-2">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          className={`rounded-app border px-4 py-3 text-sm shadow-sm ${
+            toast.tone === "success"
+              ? "border-leaf/30 bg-white text-leaf"
+              : toast.tone === "error"
+                ? "border-coral/30 bg-white text-coral"
+                : "border-line bg-white text-ink/70"
+          }`}
+        >
+          {toast.text}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -848,11 +1829,14 @@ function IssueCard({ issue }: { issue: ValidationIssue }) {
 
 function EntityEditor({ entity, draft, options, token, onChange }: { entity: AdminEntityKey; draft: AdminRow; options: RelationOptionsMap; token: string; onChange: (next: AdminRow) => void }) {
   if (entity === "lessons") return <LessonEditor draft={draft} options={options} token={token} onChange={onChange} />;
+  if (entity === "lesson-blocks") return <LessonBlockEditor draft={draft} options={options} onChange={onChange} />;
   if (entity === "vocabulary") return <VocabularyEditor draft={draft} options={options} token={token} onChange={onChange} />;
   if (entity === "grammar") return <GrammarEditor draft={draft} options={options} onChange={onChange} />;
   if (entity === "scenarios") return <ScenarioEditor draft={draft} options={options} token={token} onChange={onChange} />;
   if (entity === "dialogues") return <DialogueEditor draft={draft} options={options} token={token} onChange={onChange} />;
+  if (entity === "dialogue-lines") return <DialogueLineEditor draft={draft} options={options} onChange={onChange} />;
   if (entity === "exercises") return <ExerciseEditor draft={draft} options={options} token={token} onChange={onChange} />;
+  if (entity === "exercise-options") return <ExerciseOptionEditor draft={draft} options={options} onChange={onChange} />;
   if (entity === "audio-assets") return <AudioAssetEditor draft={draft} options={options} token={token} onChange={onChange} />;
   return <GenericEditor entity={entity} draft={draft} options={options} onChange={onChange} />;
 }
@@ -881,6 +1865,22 @@ function LessonEditor({ draft, options, token, onChange }: { draft: AdminRow; op
       <RelationPicker label="Prerequisites" options={options.lessons || []} selected={draft.prerequisite_lesson_ids || []} onChange={(value) => onChange({ ...draft, prerequisite_lesson_ids: value })} />
       <LessonAssetsEditor assets={draft.assets || []} token={token} onChange={(assets) => onChange({ ...draft, assets })} />
       <BlocksEditor draft={draft} options={options} token={token} onChange={onChange} />
+    </div>
+  );
+}
+
+function LessonBlockEditor({ draft, options, onChange }: { draft: AdminRow; options: RelationOptionsMap; onChange: (next: AdminRow) => void }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 md:grid-cols-3">
+        <SelectField label="Status" value={String(draft.status || "draft")} onChange={(value) => onChange({ ...draft, status: value })} options={STATUS_OPTIONS.map((value) => ({ value, label: value }))} />
+        <SelectField label="Lesson" value={draft.lesson_id ?? ""} onChange={(value) => onChange({ ...draft, lesson_id: value ? Number(value) : null })} options={toSelectOptions(options.lessons)} />
+        <SelectField label="Block type" value={String(draft.block_type || "explanation")} onChange={(value) => onChange({ ...draft, block_type: value })} options={BLOCK_TYPES.map((value) => ({ value, label: value.replaceAll("_", " ") }))} />
+      </div>
+      <LocalizedEditor label="Title" value={draft.title || localized("")} onChange={(value) => onChange({ ...draft, title: value })} rows={2} />
+      <LocalizedEditor label="Body" value={draft.body || localized("")} onChange={(value) => onChange({ ...draft, body: value })} rows={4} />
+      <JsonField label="Payload" value={draft.payload || {}} onChange={(value) => onChange({ ...draft, payload: value })} />
+      <TextField label="Order" value={String(draft.order_index || 0)} onChange={(value) => onChange({ ...draft, order_index: Number(value || 0) })} />
     </div>
   );
 }
@@ -980,6 +1980,26 @@ function DialogueEditor({ draft, options, token, onChange }: { draft: AdminRow; 
   );
 }
 
+function DialogueLineEditor({ draft, options, onChange }: { draft: AdminRow; options: RelationOptionsMap; onChange: (next: AdminRow) => void }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 md:grid-cols-3">
+        <SelectField label="Dialogue" value={draft.dialogue_id ?? ""} onChange={(value) => onChange({ ...draft, dialogue_id: value ? Number(value) : null })} options={toSelectOptions(options.dialogues)} />
+        <TextField label="Speaker" value={String(draft.speaker || "")} onChange={(value) => onChange({ ...draft, speaker: value })} />
+        <SelectField label="Reveal mode" value={String(draft.reveal_mode || "toggle")} onChange={(value) => onChange({ ...draft, reveal_mode: value })} options={[{ value: "toggle", label: "toggle" }, { value: "always", label: "always" }, { value: "hidden", label: "hidden" }]} />
+      </div>
+      <TextAreaField label="Korean" value={String(draft.korean || "")} onChange={(value) => onChange({ ...draft, korean: value })} rows={3} />
+      <LocalizedEditor label="Translations" value={draft.translations || localized("")} onChange={(value) => onChange({ ...draft, translations: value })} rows={2} />
+      <LocalizedEditor label="Notes" value={draft.notes || localized("")} onChange={(value) => onChange({ ...draft, notes: value })} rows={2} />
+      <TagField label="Highlighted expressions" value={draft.highlighted_expressions || []} onChange={(value) => onChange({ ...draft, highlighted_expressions: value })} />
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={Boolean(draft.is_useful_expression)} onChange={(event) => onChange({ ...draft, is_useful_expression: event.target.checked })} />
+        Useful expression
+      </label>
+    </div>
+  );
+}
+
 function ExerciseEditor({ draft, options, token, onChange }: { draft: AdminRow; options: RelationOptionsMap; token: string; onChange: (next: AdminRow) => void }) {
   return (
     <div className="space-y-4">
@@ -1001,6 +2021,23 @@ function ExerciseEditor({ draft, options, token, onChange }: { draft: AdminRow; 
       <TagField label="Tags" value={draft.tags || []} onChange={(value) => onChange({ ...draft, tags: value })} />
       <PremiumAudioAdminNote subject="exercise listening prompts" />
       <ExerciseAnswerEditor draft={draft} onChange={onChange} />
+    </div>
+  );
+}
+
+function ExerciseOptionEditor({ draft, options, onChange }: { draft: AdminRow; options: RelationOptionsMap; onChange: (next: AdminRow) => void }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 md:grid-cols-3">
+        <SelectField label="Exercise" value={draft.exercise_id ?? ""} onChange={(value) => onChange({ ...draft, exercise_id: value ? Number(value) : null })} options={toSelectOptions(options.exercises)} />
+        <TextField label="Value" value={String(draft.value || "")} onChange={(value) => onChange({ ...draft, value })} />
+        <TextField label="Order" value={String(draft.order_index || 0)} onChange={(value) => onChange({ ...draft, order_index: Number(value || 0) })} />
+      </div>
+      <LocalizedEditor label="Label" value={draft.label || localized("")} onChange={(value) => onChange({ ...draft, label: value })} rows={2} />
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={Boolean(draft.is_correct)} onChange={(event) => onChange({ ...draft, is_correct: event.target.checked })} />
+        Correct option
+      </label>
     </div>
   );
 }

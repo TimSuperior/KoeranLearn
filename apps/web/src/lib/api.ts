@@ -1,5 +1,6 @@
 import type {
   AuthUser,
+  ExerciseFeedback,
   GrammarPoint,
   Lesson,
   Path,
@@ -17,11 +18,14 @@ import type {
   AdminFilters,
   AdminListResponse,
   AdminRow,
+  AuditTrailResponse,
   DashboardSummary,
   ExportResponse,
   ImportResult,
   PreviewResponse,
+  PublishQueueResponse,
   RelationOptionsMap,
+  ValidationCenterResponse,
   ValidationResult
 } from "../admin/types";
 
@@ -103,7 +107,7 @@ export const api = {
     });
   },
   submitExercise(telegramId: string, lessonId: number | null | undefined, exerciseId: number, answer: unknown) {
-    return request<{ is_correct: boolean; expected: unknown; explanation: Record<string, string>; lesson_completed: boolean; xp_awarded: number }>(
+    return request<ExerciseFeedback>(
       `/api/exercises/${exerciseId}/submit`,
       {
         method: "POST",
@@ -158,6 +162,16 @@ export const api = {
       body: JSON.stringify(payload)
     });
   },
+  localizationBundle(namespace: string, language: string) {
+    const search = new URLSearchParams({ namespace, language }).toString();
+    return request<Record<string, string>>(`/api/localization/bundle?${search}`);
+  },
+  adminLocalizationMissing(token: string, namespace?: string) {
+    const search = namespace ? `?${new URLSearchParams({ namespace }).toString()}` : "";
+    return request<Array<{ namespace: string; key: string; language: string }>>(`/api/localization/missing${search}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+  },
   settings() {
     return request<UserSettings>("/api/settings");
   },
@@ -175,7 +189,7 @@ export const api = {
       "/api/streak"
     );
   },
-  quizStart(payload: { topic?: string; limit?: number; mistakes_only?: boolean }) {
+  quizStart(payload: { topic?: string; limit?: number; mistakes_only?: boolean; due_only?: boolean; focus?: string; require_audio?: boolean }) {
     return request<QuizSession>("/api/quiz/start", {
       method: "POST",
       body: JSON.stringify(payload)
@@ -398,6 +412,39 @@ export const api = {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload)
+    });
+  },
+  adminPublishQueue(token: string, params: { entity?: string; q?: string; limit?: number; offset?: number } = {}) {
+    const search = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") {
+        search.set(key, String(value));
+      }
+    });
+    return request<PublishQueueResponse>(`/api/admin/content/publish-queue${search.toString() ? `?${search.toString()}` : ""}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+  },
+  adminValidationIssues(token: string, params: { entity?: string; q?: string; level?: string; limit?: number; offset?: number } = {}) {
+    const search = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") {
+        search.set(key, String(value));
+      }
+    });
+    return request<ValidationCenterResponse>(`/api/admin/content/issues${search.toString() ? `?${search.toString()}` : ""}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+  },
+  adminAuditTrail(token: string, params: { entity?: string; item_id?: number; action?: string; limit?: number; offset?: number } = {}) {
+    const search = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") {
+        search.set(key, String(value));
+      }
+    });
+    return request<AuditTrailResponse>(`/api/admin/content/audit${search.toString() ? `?${search.toString()}` : ""}`, {
+      headers: { Authorization: `Bearer ${token}` }
     });
   }
 };

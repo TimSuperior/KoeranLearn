@@ -1,12 +1,14 @@
 import { BookOpen, Ear, Flame, GraduationCap, Languages, MessageCircleMore, Repeat2, Sparkles, TrendingUp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+
 import { ActionCard, Button, EmptyState, ErrorState, HeroCard, MetricCard, SectionHeading, StatusChip, Surface } from "../components/ui";
+import { useI18n } from "../lib/i18n";
 import { track } from "../lib/analytics";
-import { t, topicLabel } from "../lib/format";
-import { loadDismissedPrompts, saveDismissedPrompts } from "../lib/local-state";
-import type { AppRoute } from "../lib/routes";
 import { api } from "../lib/api";
+import { interpolate } from "../lib/format";
+import { loadDismissedPrompts, saveDismissedPrompts } from "../lib/local-state";
 import { checkHomeScreenStatus, maybeAddToHomeScreen } from "../lib/telegram";
+import type { AppRoute } from "../lib/routes";
 import type { AuthUser, Lesson, Progress, Scenario } from "../types";
 
 type StreakSummary = {
@@ -18,6 +20,7 @@ type StreakSummary = {
 };
 
 export function HomeScreen({ user, onNavigate }: { user: AuthUser; onNavigate: (route: AppRoute) => void }) {
+  const { content, topicLabel, ui } = useI18n();
   const [progress, setProgress] = useState<Progress | null>(null);
   const [streak, setStreak] = useState<StreakSummary | null>(null);
   const [lesson, setLesson] = useState<Lesson | null>(null);
@@ -40,8 +43,8 @@ export function HomeScreen({ user, onNavigate }: { user: AuthUser; onNavigate: (
         setLesson(lessonValue);
         setScenarios(scenarioValue);
       })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Could not load your dashboard.");
+      .catch(() => {
+        if (!cancelled) setError(ui("home.load_error", "Could not load your dashboard."));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -61,18 +64,19 @@ export function HomeScreen({ user, onNavigate }: { user: AuthUser; onNavigate: (
     const hasPlayableAudio = lesson.has_audio || lesson.assets.some((asset) => asset.asset_type.toLowerCase().includes("audio")) || lesson.blocks.some((block) => Boolean(block.payload.audio_asset_url || block.payload.audio_url));
     if (!hasPlayableAudio && !lesson.audio_locked) return null;
     return {
-      title: lesson.audio_locked ? "Premium listening" : "Listening practice",
+      title: lesson.audio_locked ? ui("lesson.listening_locked", "Listening is locked") : ui("home.review_due_open", "Listening practice"),
       description: lesson.audio_locked
-        ? "This lesson includes premium-only listening. Open it to see the locked audio state or upgrade for playback."
-        : "This lesson already includes audio-linked blocks and prompts. Use it as your short listening pass today.",
+        ? ui("lesson.listening_locked_description", "This lesson includes premium-only audio. Upgrade to unlock playback and transcript controls.")
+        : ui("lesson.lesson_audio_description", "Use the audio before you answer to tune your ear to the target pattern."),
       route: { screen: "lesson", lessonId: lesson.id } as AppRoute
     };
-  }, [lesson]);
+  }, [lesson, ui]);
 
   const scenarioRecommendation = useMemo(
     () => scenarios.find((item) => item.progress?.status === "in_progress") || scenarios[0] || null,
     [scenarios]
   );
+  const guidedSessions = progress?.review_overview.guided_sessions.slice(0, 3) || [];
 
   const addToHomeVisible = homeScreenStatus && ["unknown", "missed"].includes(homeScreenStatus) && !dismissed.home_screen_prompt;
 
@@ -90,7 +94,7 @@ export function HomeScreen({ user, onNavigate }: { user: AuthUser; onNavigate: (
   if (loading) {
     return (
       <div className="space-y-4">
-        <HeroCard title="Loading your dashboard" description="Pulling the next lesson, review queues, and habit summary." />
+        <HeroCard title={ui("state.loading", "Loading")} description={ui("subtitle.home", "Serious mobile Korean learning")} />
       </div>
     );
   }
@@ -100,54 +104,54 @@ export function HomeScreen({ user, onNavigate }: { user: AuthUser; onNavigate: (
   }
 
   if (!progress || !streak) {
-    return <EmptyState title="No study data yet" description="Start your first lesson and this dashboard will turn into your daily control panel." action={<Button onClick={() => navigate({ screen: "lesson" }, "home_first_lesson_tapped")}>Start lesson</Button>} />;
+    return <EmptyState title={ui("home.no_data_title", "No study data yet")} description={ui("home.no_data_description", "Start your first lesson and this dashboard will turn into your daily control panel.")} action={<Button onClick={() => navigate({ screen: "lesson" }, "home_first_lesson_tapped")}>{ui("home.start_lesson", "Start lesson")}</Button>} />;
   }
 
   return (
     <div className="space-y-4">
       <HeroCard
-        eyebrow="Today"
-        title={lesson ? t(lesson.title, user.interface_language, "Continue your lesson") : "Your next move is ready"}
+        eyebrow={ui("home.today", "Today")}
+        title={lesson ? content(lesson.title, ui("home.continue_lesson", "Continue lesson")) : ui("home.continue", "Continue")}
         description={
           lesson
-            ? t(lesson.summary, user.interface_language, "Continue the guided lesson to keep momentum.")
+            ? content(lesson.summary, ui("lesson.guided", "Guided lesson"))
             : progress.due_reviews > 0
-              ? `${progress.due_reviews} reviews are due before they start slipping.`
-              : "Your dashboard is clear. Use a scenario or vocabulary pass to keep the streak intact."
+              ? `${progress.due_reviews} ${ui("home.due_reviews", "Due reviews")}`
+              : ui("subtitle.home", "Serious mobile Korean learning")
         }
-        action={<StatusChip tone="accent">{progress.current_path ? t(progress.current_path.title, user.interface_language) : "Guided path"}</StatusChip>}
+        action={<StatusChip tone="accent">{progress.current_path ? content(progress.current_path.title, ui("progress.guided_curriculum", "Guided curriculum")) : ui("progress.guided_curriculum", "Guided curriculum")}</StatusChip>}
       >
         <div className="grid gap-3">
           <div className="rounded-[24px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--app-muted)]">Current lesson</p>
-                <p className="mt-2 text-lg font-semibold">{progress.current_lesson ? t(progress.current_lesson.title, user.interface_language) : "No lesson active"}</p>
-                {progress.current_lesson?.summary ? <p className="mt-1 text-sm leading-6 text-[color:var(--app-muted)]">{t(progress.current_lesson.summary, user.interface_language)}</p> : null}
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--app-muted)]">{ui("home.current_lesson", "Current lesson")}</p>
+                <p className="mt-2 text-lg font-semibold">{progress.current_lesson ? content(progress.current_lesson.title, ui("home.no_lesson_active", "No lesson active")) : ui("home.no_lesson_active", "No lesson active")}</p>
+                {progress.current_lesson?.summary ? <p className="mt-1 text-sm leading-6 text-[color:var(--app-muted)]">{content(progress.current_lesson.summary)}</p> : null}
               </div>
-              {lesson?.has_audio ? <StatusChip tone="success">Audio</StatusChip> : null}
-              {lesson?.audio_locked ? <StatusChip tone="warning">Premium audio</StatusChip> : null}
+              {lesson?.has_audio ? <StatusChip tone="success">{ui("lesson.listen", "Listen")}</StatusChip> : null}
+              {lesson?.audio_locked ? <StatusChip tone="warning">{ui("lesson.premium", "Premium")} audio</StatusChip> : null}
             </div>
             <div className="mt-4 h-3 overflow-hidden rounded-full bg-black/6">
               <div className="h-full rounded-full bg-[linear-gradient(90deg,var(--app-accent),#66af86)]" style={{ width: `${progress.current_path?.percent_complete || 0}%` }} />
             </div>
             <div className="mt-2 flex items-center justify-between text-xs text-[color:var(--app-muted)]">
-              <span>{progress.current_path?.completed_lessons || 0}/{progress.current_path?.total_lessons || 0} lessons</span>
+              <span>{progress.current_path?.completed_lessons || 0}/{progress.current_path?.total_lessons || 0} {ui("home.lessons_complete", "lessons complete")}</span>
               <span>{Math.round(progress.current_path?.percent_complete || 0)}%</span>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <Button onClick={() => navigate({ screen: "lesson", lessonId: lesson?.id || progress.current_lesson?.id }, "home_continue_lesson_tapped")}>Continue lesson</Button>
-              <Button variant="secondary" onClick={() => navigate({ screen: "review", mode: "due", size: 5, shortcut: "two-minute" }, "home_two_minute_review_tapped")}>2-minute review</Button>
+              <Button onClick={() => navigate({ screen: "lesson", lessonId: lesson?.id || progress.current_lesson?.id }, "home_continue_lesson_tapped")}>{ui("home.continue_lesson", "Continue lesson")}</Button>
+              <Button variant="secondary" onClick={() => navigate({ screen: "review", mode: "due", size: 5, shortcut: "two-minute" }, "home_two_minute_review_tapped")}>{ui("home.two_minute_review", "2-minute review")}</Button>
             </div>
           </div>
 
           {addToHomeVisible ? (
             <div className="rounded-[24px] border border-[color:var(--app-line)] bg-[color:var(--app-surface)] p-4">
-              <p className="text-sm font-semibold">Keep the app one tap away</p>
-              <p className="mt-1 text-sm leading-6 text-[color:var(--app-muted)]">Add Korean Learn to your home screen if you use it daily. It fits best as a repeat-study product.</p>
+              <p className="text-sm font-semibold">{ui("home.keep_close_title", "Keep the app one tap away")}</p>
+              <p className="mt-1 text-sm leading-6 text-[color:var(--app-muted)]">{ui("home.keep_close_description", "Add Korean Learn to your home screen if you use it daily.")}</p>
               <div className="mt-4 flex gap-2">
-                <Button onClick={() => { maybeAddToHomeScreen(); rememberDismissed(); }}>Add to home screen</Button>
-                <Button variant="ghost" onClick={rememberDismissed}>Not now</Button>
+                <Button onClick={() => { maybeAddToHomeScreen(); rememberDismissed(); }}>{ui("home.add_to_home", "Add to home screen")}</Button>
+                <Button variant="ghost" onClick={rememberDismissed}>{ui("home.not_now", "Not now")}</Button>
               </div>
             </div>
           ) : null}
@@ -155,26 +159,46 @@ export function HomeScreen({ user, onNavigate }: { user: AuthUser; onNavigate: (
       </HeroCard>
 
       <div className="grid grid-cols-2 gap-3">
-        <MetricCard label="XP" value={progress.xp} detail="All-time study points" icon={Sparkles} tone="success" />
-        <MetricCard label="Streak" value={streak.streak_count} detail={`Next ${streak.next_milestone}`} icon={Flame} tone="warning" />
-        <MetricCard label="Due reviews" value={progress.due_reviews} detail="Ready now" icon={Repeat2} tone="accent" />
-        <MetricCard label="Completed" value={progress.completed_lessons} detail="Lessons finished" icon={BookOpen} tone="neutral" />
+        <MetricCard label={ui("home.xp", "XP")} value={progress.xp} detail={ui("home.xp_detail", "All-time study points")} icon={Sparkles} tone="success" />
+        <MetricCard label={ui("home.streak", "Streak")} value={streak.streak_count} detail={interpolate(ui("home.streak_next", "Next {count}"), { count: streak.next_milestone })} icon={Flame} tone="warning" />
+        <MetricCard label={ui("home.due_reviews", "Due reviews")} value={progress.due_reviews} detail={ui("home.ready_now", "Ready now")} icon={Repeat2} tone="accent" />
+        <MetricCard label={ui("home.completed", "Completed")} value={progress.completed_lessons} detail={ui("home.completed_detail", "Lessons finished")} icon={BookOpen} tone="neutral" />
       </div>
+
+      {guidedSessions.length ? (
+        <Surface>
+          <SectionHeading eyebrow={ui("home.review_now", "Review now")} title={ui("home.attention_first", "What needs attention first")} description={ui("review.center", "Review center")} />
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            {guidedSessions.map((session) => (
+              <ActionCard
+                key={session.mode}
+                title={session.title}
+                description={`${session.description} ${session.item_count} ${ui("review.items", "items")} ready.`}
+                meta={<StatusChip tone={session.tone}>{session.item_count} {ui("home.ready_now", "ready")}</StatusChip>}
+                cta={ui("home.review_due_open", "Open review")}
+                icon={session.mode === "listening" ? Ear : Repeat2}
+                tone={session.tone}
+                onClick={() => navigate({ screen: "review", mode: session.mode, size: session.size }, `home_${session.mode}_review_tapped`)}
+              />
+            ))}
+          </div>
+        </Surface>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-2">
         <ActionCard
-          title="Due review"
-          description={progress.due_reviews ? `${progress.due_reviews} items are due right now.` : "Your due queue is clear. This is a good moment to keep moving in the curriculum."}
-          meta={<StatusChip tone={progress.due_reviews ? "accent" : "neutral"}>{progress.due_reviews} due</StatusChip>}
-          cta="Open review"
+          title={ui("home.review_due_title", "Due review")}
+          description={progress.due_reviews ? interpolate(ui("progress.clear_due_description", "{count} items are waiting. A short review session will improve retention before the next lesson."), { count: progress.due_reviews }) : ui("review.empty_title", "Nothing in this queue")}
+          meta={<StatusChip tone={progress.due_reviews ? "accent" : "neutral"}>{progress.due_reviews} {ui("home.due_reviews", "due")}</StatusChip>}
+          cta={ui("home.review_due_open", "Open review")}
           icon={Repeat2}
           onClick={() => navigate({ screen: "review", mode: "due", size: 10 }, "home_due_review_tapped")}
         />
         <ActionCard
-          title="Mistakes review"
-          description={progress.mistake_reviews ? `${progress.mistake_reviews} recent misses need another pass.` : "No open mistake queue right now."}
-          meta={<StatusChip tone={progress.mistake_reviews ? "danger" : "neutral"}>{progress.mistake_reviews} mistakes</StatusChip>}
-          cta="Focus mistakes"
+          title={ui("home.mistakes_title", "Mistakes review")}
+          description={progress.mistake_reviews ? interpolate(ui("progress.repair_description", "{count} items need a focused retry."), { count: progress.mistake_reviews }) : ui("home.no_mistake_queue", "No open mistake queue right now.")}
+          meta={<StatusChip tone={progress.mistake_reviews ? "danger" : "neutral"}>{progress.mistake_reviews} {ui("home.mistakes_title", "mistakes")}</StatusChip>}
+          cta={ui("home.focus_mistakes", "Focus mistakes")}
           icon={TrendingUp}
           tone="danger"
           onClick={() => navigate({ screen: "review", mode: "mistakes", size: 10 }, "home_mistakes_review_tapped")}
@@ -183,7 +207,7 @@ export function HomeScreen({ user, onNavigate }: { user: AuthUser; onNavigate: (
           <ActionCard
             title={listeningCard.title}
             description={listeningCard.description}
-            cta={lesson?.audio_locked ? "Open locked lesson" : "Open audio lesson"}
+            cta={ui("action.open", "Open")}
             icon={Ear}
             tone={lesson?.audio_locked ? "warning" : "success"}
             onClick={() => navigate(listeningCard.route, "home_listening_tapped")}
@@ -191,17 +215,17 @@ export function HomeScreen({ user, onNavigate }: { user: AuthUser; onNavigate: (
         ) : null}
         {scenarioRecommendation ? (
           <ActionCard
-            title={t(scenarioRecommendation.title, user.interface_language, "Scenario recommendation")}
-            description={t(scenarioRecommendation.description, user.interface_language, "Short real-life dialogue practice")}
+            title={content(scenarioRecommendation.title, ui("route.scenarios", "Scenarios"))}
+            description={content(scenarioRecommendation.description)}
             meta={
               <>
                 <StatusChip tone="neutral">{topicLabel(scenarioRecommendation.topic)}</StatusChip>
                 <StatusChip tone={scenarioRecommendation.progress?.status === "in_progress" ? "accent" : "neutral"}>
-                  {scenarioRecommendation.progress?.status === "in_progress" ? "Continue" : "Recommended"}
+                  {scenarioRecommendation.progress?.status === "in_progress" ? ui("home.continue", "Continue") : ui("home.recommended", "Recommended")}
                 </StatusChip>
               </>
             }
-            cta="Open scenario"
+            cta={ui("home.open_scenario", "Open scenario")}
             icon={MessageCircleMore}
             onClick={() => navigate({ screen: "scenarios", scenario: scenarioRecommendation.slug }, "home_scenario_tapped")}
           />
@@ -210,27 +234,31 @@ export function HomeScreen({ user, onNavigate }: { user: AuthUser; onNavigate: (
 
       <div className="grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
         <Surface>
-          <SectionHeading eyebrow="Progress snapshot" title="Recent progress" description="A quick look at what you finished and where you are slowing down." />
+          <SectionHeading eyebrow={ui("home.progress_snapshot", "Progress snapshot")} title={ui("home.recent_progress", "Recent progress")} description={ui("progress.trajectory_description", "A compact view of what is working, what is slipping, and what to do next.")} />
           <div className="mt-4 space-y-3">
             <div className="rounded-[22px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--app-muted)]">Last completed lesson</p>
-              <p className="mt-2 text-base font-semibold">{progress.last_completed_lesson ? t(progress.last_completed_lesson.title, user.interface_language) : "You have not completed a lesson yet."}</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--app-muted)]">{ui("home.last_completed_lesson", "Last completed lesson")}</p>
+              <p className="mt-2 text-base font-semibold">{progress.last_completed_lesson ? content(progress.last_completed_lesson.title, ui("home.no_completed_lesson", "You have not completed a lesson yet.")) : ui("home.no_completed_lesson", "You have not completed a lesson yet.")}</p>
             </div>
             <div className="rounded-[22px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--app-muted)]">Weak areas</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--app-muted)]">{ui("home.weak_areas", "Weak areas")}</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {progress.difficult_topics.length ? (
                   progress.difficult_topics.map((item) => <StatusChip key={item.topic} tone="warning">{topicLabel(item.topic)}</StatusChip>)
                 ) : (
-                  <span className="text-sm text-[color:var(--app-muted)]">No recurring weak spots yet.</span>
+                  <span className="text-sm text-[color:var(--app-muted)]">{ui("home.no_weak_spots", "No recurring weak spots yet.")}</span>
                 )}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {progress.review_overview.weak_grammar.slice(0, 3).map((item) => <StatusChip key={item.key} tone="warning">{item.label} · {item.mistakes}</StatusChip>)}
+                {progress.review_overview.repeated_mistakes.slice(0, 2).map((item) => <StatusChip key={item.review_item_id} tone="danger">{item.mistake_count}x repeat</StatusChip>)}
               </div>
             </div>
           </div>
         </Surface>
 
         <Surface>
-          <SectionHeading eyebrow="Weekly habit" title="Keep the cadence small" description="Serious progress in Telegram comes from short, repeated wins." />
+          <SectionHeading eyebrow={ui("home.weekly_habit", "Weekly habit")} title={ui("home.keep_cadence", "Keep the cadence small")} description={ui("progress.habit_description", "Consistency matters more than intensity in the first months.")} />
           <div className="mt-4 grid grid-cols-7 gap-2">
             {streak.weekly_activity.map((item) => (
               <div
@@ -241,26 +269,26 @@ export function HomeScreen({ user, onNavigate }: { user: AuthUser; onNavigate: (
                     : "border-[color:var(--app-line)] bg-[color:var(--app-elevated)] text-[color:var(--app-muted)]"
                 }`}
               >
-                <span className="text-[11px] font-semibold">{item.active ? "On" : "Off"}</span>
+                <span className="text-[11px] font-semibold">{item.active ? ui("home.on", "On") : ui("home.off", "Off")}</span>
               </div>
             ))}
           </div>
           <div className="mt-4 flex items-center justify-between rounded-[22px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--app-muted)]">Current streak</p>
-              <p className="mt-1 text-xl font-semibold">{streak.streak_count} days</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--app-muted)]">{ui("home.current_streak", "Current streak")}</p>
+              <p className="mt-1 text-xl font-semibold">{streak.streak_count} {ui("home.days", "days")}</p>
             </div>
-            <Button variant="secondary" onClick={() => navigate({ screen: "progress" }, "home_progress_tapped")}>Open progress</Button>
+            <Button variant="secondary" onClick={() => navigate({ screen: "progress" }, "home_progress_tapped")}>{ui("home.open_progress", "Open progress")}</Button>
           </div>
         </Surface>
       </div>
 
       <Surface>
-        <SectionHeading eyebrow="Quick jump" title="Choose a study lane" description="Jump straight into the material you need right now." />
+        <SectionHeading eyebrow={ui("home.quick_jump", "Quick jump")} title={ui("home.choose_lane", "Choose a study lane")} description={ui("subtitle.home", "Serious mobile Korean learning")} />
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <ActionCard title="Vocabulary" description="Search words, check review state, and bookmark difficult items." cta="Open vocab" icon={Languages} onClick={() => navigate({ screen: "vocab" }, "home_vocab_tapped")} />
-          <ActionCard title="Grammar" description="Read localized explanations and revisit common mistakes." cta="Open grammar" icon={GraduationCap} onClick={() => navigate({ screen: "grammar" }, "home_grammar_tapped")} />
-          <ActionCard title="Scenarios" description="Practice short dialogues with translation and listening controls." cta="Open scenarios" icon={MessageCircleMore} onClick={() => navigate({ screen: "scenarios" }, "home_scenarios_tapped")} />
+          <ActionCard title={ui("route.vocab", "Vocabulary")} description={ui("vocab.hero_description", "Use bookmarks for your own difficult words, and use review chips to spot what is due now.")} cta={ui("home.open_vocab", "Open vocab")} icon={Languages} onClick={() => navigate({ screen: "vocab" }, "home_vocab_tapped")} />
+          <ActionCard title={ui("route.grammar", "Grammar")} description={ui("grammar.hero_description", "Use the grammar view when you want explicit structure, linked scenarios, and a quick route back into practice.")} cta={ui("home.open_grammar", "Open grammar")} icon={GraduationCap} onClick={() => navigate({ screen: "grammar" }, "home_grammar_tapped")} />
+          <ActionCard title={ui("route.scenarios", "Scenarios")} description={ui("scenario.hero_description", "Pick a context, hide translations when you want pressure, and switch to listening mode when audio is available.")} cta={ui("home.open_scenarios", "Open scenarios")} icon={MessageCircleMore} onClick={() => navigate({ screen: "scenarios" }, "home_scenarios_tapped")} />
         </div>
       </Surface>
     </div>

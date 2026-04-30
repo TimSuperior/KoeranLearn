@@ -1,4 +1,4 @@
-export type ReviewMode = "due" | "mistakes" | "vocab" | "grammar" | "mixed";
+export type ReviewMode = "due" | "mistakes" | "vocab" | "grammar" | "mixed" | "listening";
 
 export type AppRoute =
   | { screen: "home" }

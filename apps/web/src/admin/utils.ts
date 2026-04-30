@@ -194,6 +194,17 @@ export function blankEntity(entity: AdminEntityKey): AdminRow {
       blocks: [blankBlock()],
     };
   }
+  if (entity === "lesson-blocks") {
+    return {
+      lesson_id: null,
+      block_type: "explanation",
+      title: localized(""),
+      body: localized(""),
+      payload: {},
+      order_index: 0,
+      status: "draft",
+    };
+  }
   if (entity === "vocabulary") {
     return {
       slug: "",
@@ -266,8 +277,20 @@ export function blankEntity(entity: AdminEntityKey): AdminRow {
       dialogue_lines: [blankDialogueLine()],
     };
   }
+  if (entity === "dialogue-lines") {
+    return {
+      dialogue_id: null,
+      ...blankDialogueLine(),
+    };
+  }
   if (entity === "exercises") {
     return blankExercise();
+  }
+  if (entity === "exercise-options") {
+    return {
+      exercise_id: null,
+      ...blankExerciseOption(),
+    };
   }
   if (entity === "example-sentences") {
     return {

@@ -132,6 +132,13 @@ def listening_exercise(exercise: Exercise) -> bool:
     return exercise.exercise_type in LISTENING_EXERCISE_TYPES
 
 
+def exercise_has_audio_prompt(exercise: Exercise) -> bool:
+    if any(asset.status == "published" and not asset.is_deleted for asset in getattr(exercise, "audio_assets", []) or []):
+        return True
+    payload = exercise.payload or {}
+    return bool(payload.get("audio_url") or payload.get("audio_asset_url"))
+
+
 def lesson_has_premium_audio(lesson: Lesson) -> bool:
     if any(asset.status == "published" and not asset.is_deleted for asset in lesson.audio_assets):
         return True

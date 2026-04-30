@@ -2,15 +2,8 @@ import { ChartColumnBig, Home, Languages, MessageCircleMore, Repeat2, Settings2 
 import type { ReactNode } from "react";
 import type { AppRoute } from "../lib/routes";
 import { navSection } from "../lib/routes";
+import { useI18n } from "../lib/i18n";
 import { IconButton } from "./ui";
-
-const navItems = [
-  { key: "home", label: "Home", icon: Home },
-  { key: "review", label: "Review", icon: Repeat2 },
-  { key: "scenarios", label: "Scenarios", icon: MessageCircleMore },
-  { key: "library", label: "Library", icon: Languages },
-  { key: "progress", label: "Progress", icon: ChartColumnBig }
-] as const;
 
 export function Shell({
   children,
@@ -27,7 +20,15 @@ export function Shell({
   onNavigate: (route: AppRoute) => void;
   headerAction?: ReactNode;
 }) {
+  const { ui } = useI18n();
   const active = navSection(route);
+  const navItems = [
+    { key: "home", label: ui("route.home", "Home"), icon: Home },
+    { key: "review", label: ui("route.review", "Review"), icon: Repeat2 },
+    { key: "scenarios", label: ui("route.scenarios", "Scenarios"), icon: MessageCircleMore },
+    { key: "library", label: ui("route.vocab", "Library"), icon: Languages },
+    { key: "progress", label: ui("route.progress", "Progress"), icon: ChartColumnBig }
+  ] as const;
 
   return (
     <div className="min-h-screen bg-[color:var(--app-bg)] text-[color:var(--app-text)]">
@@ -40,11 +41,11 @@ export function Shell({
         <div className="mx-auto max-w-3xl rounded-[28px] border border-[color:var(--app-line)] bg-[color:var(--app-surface)]/88 px-4 py-4 shadow-[0_16px_50px_rgba(15,23,42,0.08)] backdrop-blur-md">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[color:var(--app-muted)]">Korean Learn</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[color:var(--app-muted)]">{ui("app.title", "Korean Learn")}</p>
               <h1 className="mt-1 truncate text-[1.35rem] font-semibold leading-tight">{title}</h1>
               {subtitle ? <p className="mt-1 truncate text-sm text-[color:var(--app-muted)]">{subtitle}</p> : null}
             </div>
-            <div className="shrink-0">{headerAction || <IconButton icon={Settings2} label="Settings" tone="neutral" onClick={() => onNavigate({ screen: "settings" })} />}</div>
+            <div className="shrink-0">{headerAction || <IconButton icon={Settings2} label={ui("shell.settings", "Settings")} tone="neutral" onClick={() => onNavigate({ screen: "settings" })} />}</div>
           </div>
         </div>
       </header>

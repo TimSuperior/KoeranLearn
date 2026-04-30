@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type Inp
 import type { LucideIcon } from "lucide-react";
 import { AlertTriangle, ChevronRight, Loader2, Pause, Play, RotateCcw } from "lucide-react";
 
+import { useI18n } from "../lib/i18n";
 import type { AudioCue, Language } from "../types";
 
 function cn(...values: Array<string | false | null | undefined>) {
@@ -240,7 +241,7 @@ export function EmptyState({
 }
 
 export function ErrorState({
-  title = "Something went wrong",
+  title,
   description,
   onRetry
 }: {
@@ -248,6 +249,7 @@ export function ErrorState({
   description: string;
   onRetry?: () => void;
 }) {
+  const { ui } = useI18n();
   return (
     <Surface className="border-[color:var(--app-secondary)]/20 bg-[color:var(--app-secondary)]/5">
       <div className="flex items-start gap-3">
@@ -255,11 +257,11 @@ export function ErrorState({
           <AlertTriangle size={18} />
         </div>
         <div className="min-w-0">
-          <p className="font-semibold text-[color:var(--app-text)]">{title}</p>
+          <p className="font-semibold text-[color:var(--app-text)]">{title || ui("state.error_title", "Something went wrong")}</p>
           <p className="mt-1 text-sm leading-6 text-[color:var(--app-muted)]">{description}</p>
           {onRetry ? (
             <Button className="mt-4" variant="secondary" onClick={onRetry}>
-              Retry
+              {ui("action.retry", "Retry")}
             </Button>
           ) : null}
         </div>
@@ -268,12 +270,13 @@ export function ErrorState({
   );
 }
 
-export function LoadingCard({ label = "Loading" }: { label?: string }) {
+export function LoadingCard({ label }: { label?: string }) {
+  const { ui } = useI18n();
   return (
     <Surface className="animate-pulse">
       <div className="flex items-center gap-3">
         <Loader2 size={18} className="animate-spin text-[color:var(--app-accent)]" />
-        <span className="text-sm text-[color:var(--app-muted)]">{label}</span>
+        <span className="text-sm text-[color:var(--app-muted)]">{label || ui("state.loading", "Loading")}</span>
       </div>
     </Surface>
   );
@@ -306,6 +309,7 @@ export function AudioPlayer({
   language?: Language;
   completed?: boolean;
 }) {
+  const { ui } = useI18n();
   const playbackUrl = item?.playback_url || src;
   const transcript = cueTranscript(item, language);
   const transcriptMode = item?.transcript_mode || "toggle";
@@ -361,7 +365,7 @@ export function AudioPlayer({
     function onError() {
       setIsPlaying(false);
       setLoading(false);
-      setError("Audio is unavailable right now.");
+      setError(ui("audio.unavailable", "Audio is unavailable right now."));
     }
 
     audio.addEventListener("play", onPlay);
@@ -419,7 +423,7 @@ export function AudioPlayer({
         await audio.play();
       } catch {
         setLoading(false);
-        setError("Playback was blocked.");
+        setError(ui("audio.blocked", "Playback was blocked."));
       }
       return;
     }
@@ -440,17 +444,17 @@ export function AudioPlayer({
     <div className="rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-3">
       {label ? <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--app-muted)]">{label}</p> : null}
       <audio ref={audioRef} preload="none" className="hidden" src={playbackUrl}>
-        Your browser does not support audio playback.
+        {ui("audio.unsupported", "Your browser does not support audio playback.")}
       </audio>
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <Button type="button" className="min-h-10 px-3" onClick={togglePlayback}>
             {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-            {isPlaying ? "Pause" : "Play"}
+            {isPlaying ? ui("audio.pause", "Pause") : ui("audio.play", "Play")}
           </Button>
           <Button type="button" variant="secondary" className="min-h-10 px-3" onClick={replayFromStart}>
             <RotateCcw size={16} />
-            Replay
+            {ui("audio.replay", "Replay")}
           </Button>
           <select
             className="h-10 rounded-[16px] border border-[color:var(--app-line)] bg-[color:var(--app-surface)] px-3 text-sm"
@@ -469,11 +473,11 @@ export function AudioPlayer({
               </option>
             ))}
           </select>
-          {loading ? <span className="text-xs text-[color:var(--app-muted)]">Loading…</span> : null}
+          {loading ? <span className="text-xs text-[color:var(--app-muted)]">{ui("audio.loading", "Loading...")}</span> : null}
         </div>
         <div className="space-y-1">
           <label htmlFor={scrubId} className="sr-only">
-            Seek audio
+            {ui("audio.seek", "Seek audio")}
           </label>
           <input
             id={scrubId}
@@ -506,7 +510,11 @@ export function AudioPlayer({
                 className="text-sm font-semibold text-[color:var(--app-accent)]"
                 disabled={transcriptLocked && !completed}
               >
-                {transcriptVisible ? "Hide transcript" : transcriptLocked && !completed ? "Transcript unlocks after completion" : "Reveal transcript"}
+                {transcriptVisible
+                  ? ui("audio.transcript.hide", "Hide transcript")
+                  : transcriptLocked && !completed
+                    ? ui("audio.transcript.locked", "Transcript unlocks after completion")
+                    : ui("audio.transcript.reveal", "Reveal transcript")}
               </button>
             ) : null}
             {transcriptVisible ? <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{transcript}</p> : null}

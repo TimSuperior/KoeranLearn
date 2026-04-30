@@ -115,6 +115,7 @@ def validate_entity_payload(
         _require_localized(data, "title", issues, required_all=True)
 
     _validate_relation_ids(db, relation_ids, issues)
+    _validate_link_statuses(db, entity, data, relation_ids, children, issues)
     return ValidationResult(entity=entity, valid=not any(item.level == "error" for item in issues), issues=issues, checked_at=datetime.now(timezone.utc))
 
 
@@ -195,6 +196,7 @@ def _validate_lesson(
         if block.get("status", "draft") == "archived":
             continue
         _validate_lesson_block(block, issues, prefix=f"blocks[{index}]")
+    _warn_if_localized_lists_identical(data, "transfer_notes", issues)
     if not relation_ids.get("related_vocabulary"):
         issues.append(ValidationIssue(level="warning", code="no_related_vocab", field="related_vocabulary", message="Lesson has no related vocabulary attached."))
     if not relation_ids.get("related_grammar"):
@@ -217,6 +219,8 @@ def _validate_grammar(data: dict[str, Any], issues: list[ValidationIssue]) -> No
         issues.append(ValidationIssue(level="error", code="missing_pattern", field="korean_pattern", message="Grammar pattern is required."))
     _require_localized(data, "title", issues, required_all=True)
     _require_localized(data, "explanation", issues, required_all=True)
+    _warn_if_localized_lists_identical(data, "transfer_notes", issues)
+    _warn_if_localized_lists_identical(data, "common_errors", issues)
 
 
 def _validate_scenario(data: dict[str, Any], children: dict[str, list[dict[str, Any]]], issues: list[ValidationIssue]) -> None:
@@ -321,6 +325,31 @@ def _validate_example_sentence(data: dict[str, Any], issues: list[ValidationIssu
     _require_localized(data, "translations", issues, at_least_one=True)
 
 
+def _warn_if_localized_lists_identical(data: dict[str, Any], field: str, issues: list[ValidationIssue]) -> None:
+    value = data.get(field)
+    if not isinstance(value, dict):
+        return
+    normalized: dict[str, tuple[str, ...]] = {}
+    for language in LOCALIZED_LANGUAGES:
+        raw_items = value.get(language)
+        if not isinstance(raw_items, list):
+            return
+        cleaned = tuple(str(item).strip() for item in raw_items if str(item).strip())
+        if not cleaned:
+            return
+        normalized[language] = cleaned
+    unique_sets = {items for items in normalized.values()}
+    if len(unique_sets) == 1:
+        issues.append(
+            ValidationIssue(
+                level="warning",
+                code="localized_transfer_needs_adaptation",
+                field=field,
+                message=f"{field} should reflect learner-specific transfer issues instead of reusing the same RU/UZ/EN copy.",
+            )
+        )
+
+
 def _validate_relation_ids(db: Session, relation_ids: dict[str, list[int]], issues: list[ValidationIssue]) -> None:
     relation_models = {
         "related_vocabulary": Vocabulary,
@@ -338,6 +367,148 @@ def _validate_relation_ids(db: Session, relation_ids: dict[str, list[int]], issu
             if not db.get(model, item_id):
                 issues.append(
                     ValidationIssue(level="error", code="missing_relation", field=field, message=f"{field} item {item_id} does not exist."))
+
+
+def _validate_link_statuses(
+    db: Session,
+    entity: str,
+    data: dict[str, Any],
+    relation_ids: dict[str, list[int]],
+    children: dict[str, list[dict[str, Any]]],
+    issues: list[ValidationIssue],
+) -> None:
+    if entity == "courses":
+        _validate_parent_status(db, LearningPath, data.get("path_id"), "path_id", issues, "Course belongs to an unpublished path.")
+    elif entity == "modules":
+        _validate_parent_status(db, Course, data.get("course_id"), "course_id", issues, "Module belongs to an unpublished course.")
+    elif entity == "lessons":
+        _validate_parent_status(db, Module, data.get("module_id"), "module_id", issues, "Lesson belongs to an unpublished module.")
+        _validate_optional_statuses(db, Lesson, data.get("prerequisite_lesson_ids") or [], "prerequisite_lesson_ids", issues, "warning")
+        _validate_optional_statuses(db, Vocabulary, relation_ids.get("related_vocabulary") or [], "related_vocabulary", issues, "warning")
+        _validate_optional_statuses(db, GrammarPoint, relation_ids.get("related_grammar") or [], "related_grammar", issues, "warning")
+        _validate_optional_statuses(db, Scenario, relation_ids.get("related_scenarios") or [], "related_scenarios", issues, "warning")
+        for index, block in enumerate(children.get("blocks") or [], start=1):
+            _validate_block_links(db, block, issues, prefix=f"blocks[{index}]")
+    elif entity == "lesson-blocks":
+        _validate_parent_status(db, Lesson, data.get("lesson_id"), "lesson_id", issues, "Lesson block belongs to an unpublished lesson.")
+        _validate_block_links(db, data, issues)
+    elif entity == "exercises":
+        _validate_optional_parent_status(db, Lesson, data.get("lesson_id"), "lesson_id", issues)
+        _validate_optional_parent_status(db, GrammarPoint, data.get("grammar_point_id"), "grammar_point_id", issues)
+        _validate_optional_parent_status(db, Vocabulary, data.get("vocabulary_id"), "vocabulary_id", issues)
+    elif entity == "example-sentences":
+        _validate_optional_parent_status(db, GrammarPoint, data.get("grammar_point_id"), "grammar_point_id", issues)
+        _validate_optional_parent_status(db, Vocabulary, data.get("vocabulary_id"), "vocabulary_id", issues)
+    elif entity == "vocabulary":
+        _validate_optional_statuses(db, Lesson, relation_ids.get("related_lessons") or [], "related_lessons", issues, "warning")
+        _validate_optional_statuses(db, Scenario, relation_ids.get("related_scenarios") or [], "related_scenarios", issues, "warning")
+    elif entity == "grammar":
+        _validate_optional_statuses(db, Lesson, relation_ids.get("related_lessons") or [], "related_lessons", issues, "warning")
+        _validate_optional_statuses(db, Scenario, relation_ids.get("related_scenarios") or [], "related_scenarios", issues, "warning")
+    elif entity == "scenarios":
+        _validate_optional_statuses(db, Lesson, relation_ids.get("related_lessons") or [], "related_lessons", issues, "warning")
+        _validate_optional_statuses(db, Vocabulary, relation_ids.get("related_vocabulary") or [], "related_vocabulary", issues, "warning")
+        _validate_optional_statuses(db, GrammarPoint, relation_ids.get("related_grammar") or [], "related_grammar", issues, "warning")
+        _validate_optional_statuses(db, Vocabulary, data.get("target_vocabulary_ids") or [], "target_vocabulary_ids", issues, "warning")
+        _validate_optional_statuses(db, GrammarPoint, data.get("target_grammar_ids") or [], "target_grammar_ids", issues, "warning")
+    elif entity == "dialogues":
+        _validate_parent_status(db, Scenario, data.get("scenario_id"), "scenario_id", issues, "Dialogue belongs to an unpublished scenario.")
+    elif entity == "dialogue-lines":
+        _validate_parent_status(db, Dialogue, data.get("dialogue_id"), "dialogue_id", issues, "Dialogue line belongs to an unpublished dialogue.")
+
+
+def _validate_parent_status(
+    db: Session,
+    model: type,
+    item_id: int | None,
+    field: str,
+    issues: list[ValidationIssue],
+    message: str,
+) -> None:
+    if not item_id:
+        return
+    row = db.get(model, item_id)
+    if row is None:
+        return
+    if getattr(row, "status", "published") != "published":
+        issues.append(ValidationIssue(level="error", code="unpublished_linked_content", field=field, message=message))
+
+
+def _validate_optional_parent_status(db: Session, model: type, item_id: int | None, field: str, issues: list[ValidationIssue]) -> None:
+    if not item_id:
+        return
+    row = db.get(model, item_id)
+    if row is None:
+        return
+    if getattr(row, "status", "published") != "published":
+        issues.append(
+            ValidationIssue(
+                level="warning",
+                code="unpublished_linked_content",
+                field=field,
+                message=f"Linked {field.replace('_id', '').replace('_', ' ')} is not published yet.",
+            )
+        )
+
+
+def _validate_optional_statuses(
+    db: Session,
+    model: type,
+    item_ids: list[int],
+    field: str,
+    issues: list[ValidationIssue],
+    level: str,
+) -> None:
+    for item_id in item_ids:
+        row = db.get(model, item_id)
+        if row is None:
+            continue
+        if getattr(row, "status", "published") != "published":
+            issues.append(
+                ValidationIssue(
+                    level=level,  # type: ignore[arg-type]
+                    code="unpublished_linked_content",
+                    field=field,
+                    message=f"{field} includes unpublished item {item_id}.",
+                )
+            )
+
+
+def _validate_block_links(db: Session, block: dict[str, Any], issues: list[ValidationIssue], *, prefix: str = "") -> None:
+    payload = block.get("payload") or {}
+    block_type = block.get("block_type")
+    if block_type == "exercise":
+        exercise_ids = []
+        if payload.get("exercise_id"):
+            exercise_ids.append(payload["exercise_id"])
+        if isinstance(payload.get("exercise_ids"), list):
+            exercise_ids.extend(payload["exercise_ids"])
+        for exercise_id in exercise_ids:
+            row = db.get(Exercise, exercise_id)
+            if row is None:
+                continue
+            if getattr(row, "status", "published") != "published":
+                issues.append(
+                    ValidationIssue(
+                        level="error",
+                        code="unpublished_linked_content",
+                        field=_field(prefix, "payload.exercise_id"),
+                        message=f"Exercise block references unpublished exercise {exercise_id}.",
+                    )
+                )
+    if block_type == "scenario_link" and payload.get("scenario_id"):
+        row = db.get(Scenario, payload["scenario_id"])
+        if row is None:
+            return
+        if getattr(row, "status", "published") != "published":
+            issues.append(
+                ValidationIssue(
+                    level="error",
+                    code="unpublished_linked_content",
+                    field=_field(prefix, "payload.scenario_id"),
+                    message=f"Scenario block references unpublished scenario {payload['scenario_id']}.",
+                )
+            )
 
 
 def _field(prefix: str, field: str) -> str:

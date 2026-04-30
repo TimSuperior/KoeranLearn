@@ -45,6 +45,15 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    async def localization_bundle(self, telegram_id: int | str, namespace: str, language: str) -> dict[str, str]:
+        response = await self.client.get(
+            "/api/localization/bundle",
+            params={"namespace": namespace, "language": language},
+            headers=self._headers(telegram_id),
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def continue_lesson(self, telegram_id: int | str) -> dict | None:
         response = await self.client.get(f"/api/lessons/continue/{telegram_id}", headers=self._headers(telegram_id))
         response.raise_for_status()

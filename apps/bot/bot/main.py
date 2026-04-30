@@ -42,6 +42,7 @@ from bot.keyboards import (
 from bot.texts import (
     action_from_label,
     button,
+    cache_bundle,
     command_descriptions,
     difficulty_label,
     language_name,
@@ -156,7 +157,12 @@ def chat_user_id(message: Message) -> int:
 async def user_language(telegram_id: int | str) -> str:
     try:
         summary = await api.user_summary(telegram_id)
-        return normalize_language(summary.get("interface_language"))
+        language = normalize_language(summary.get("interface_language"))
+        try:
+            cache_bundle(language, await api.localization_bundle(telegram_id, "bot", language))
+        except Exception:
+            LOGGER.debug("Failed to refresh bot localization bundle", exc_info=True)
+        return language
     except Exception:
         return "en"
 

@@ -10,7 +10,24 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, inspect, or_
 from sqlalchemy.orm import Session, selectinload
 
-from app.admin_schemas import ExportResponse, ImportRequest, ImportResult, PreviewResponse, RelationOption, ValidationIssue, ValidationResult
+from app.admin_schemas import (
+    AuditTrailItem,
+    AuditTrailResponse,
+    DashboardEntitySummary,
+    DashboardOverview,
+    DashboardSummary,
+    ExportResponse,
+    ImportRequest,
+    ImportResult,
+    PreviewResponse,
+    PublishQueueItem,
+    PublishQueueResponse,
+    RelationOption,
+    ValidationCenterItem,
+    ValidationCenterResponse,
+    ValidationIssue,
+    ValidationResult,
+)
 from app.core.config import get_settings
 from app.models.schema import (
     AdminAuditLog,
@@ -99,6 +116,7 @@ ENTITY_CONFIGS: dict[str, EntityConfig] = {
             selectinload(Lesson.blocks),
             selectinload(Lesson.assets),
             selectinload(Lesson.exercises).selectinload(Exercise.options),
+            selectinload(Lesson.exercises).selectinload(Exercise.audio_assets),
             selectinload(Lesson.related_vocabulary),
             selectinload(Lesson.related_grammar),
             selectinload(Lesson.related_scenarios),
@@ -112,7 +130,7 @@ ENTITY_CONFIGS: dict[str, EntityConfig] = {
         sort_field="order_index",
         unique_fields=("slug",),
         child_fields={"options": ChildConfig(entity="exercise-options", attr="options", model=ExerciseOption)},
-        detail_loaders=(selectinload(Exercise.options), selectinload(Exercise.lesson)),
+        detail_loaders=(selectinload(Exercise.options), selectinload(Exercise.lesson), selectinload(Exercise.audio_assets)),
     ),
     "exercise-options": EntityConfig(model=ExerciseOption, search_fields=("value",), sort_field="order_index"),
     "vocabulary": EntityConfig(
@@ -176,20 +194,150 @@ ENTITY_CONFIGS: dict[str, EntityConfig] = {
     "premium-packs": EntityConfig(model=PremiumPack, search_fields=("slug", "currency"), sort_field="order_index", unique_fields=("slug",)),
 }
 
+SCAN_EXCLUDED_ENTITIES = {"lesson-assets"}
 
-def dashboard(db: Session) -> dict[str, Any]:
-    payload: dict[str, Any] = {"entities": {}, "drafts": {}, "premium": {}}
+
+def dashboard(db: Session) -> DashboardSummary:
+    payload = DashboardSummary()
     for entity, config in ENTITY_CONFIGS.items():
+        if entity in SCAN_EXCLUDED_ENTITIES:
+            continue
         model = config.model
         query = db.query(model)
         if hasattr(model, "is_deleted"):
             query = query.filter(model.is_deleted.is_(False))
-        payload["entities"][entity] = query.count()
+        total = query.count()
+        payload.entities[entity] = total
+        entity_summary = DashboardEntitySummary(total=total)
         if hasattr(model, "status"):
-            payload["drafts"][entity] = query.filter(model.status == "draft").count()
+            entity_summary.draft = query.filter(model.status == "draft").count()
+            entity_summary.published = query.filter(model.status == "published").count()
+            entity_summary.archived = query.filter(model.status == "archived").count()
+            payload.drafts[entity] = entity_summary.draft
         if hasattr(model, "resolved_access_state"):
-            payload["premium"][entity] = query.filter(model.resolved_access_state == "premium").count()
+            entity_summary.premium = query.filter(model.resolved_access_state == "premium").count()
+            payload.premium[entity] = entity_summary.premium
+        payload.by_entity[entity] = entity_summary
+
+    queue_items = _collect_publish_queue_items(db)
+    validation_items = _collect_validation_center_items(db)
+    payload.publish_queue_total = len(queue_items)
+    payload.validation_issue_total = sum(item.error_count for item in validation_items)
+    payload.validation_warning_total = sum(item.warning_count for item in validation_items)
+
+    ready_by_entity: dict[str, int] = {}
+    blocked_by_entity: dict[str, int] = {}
+    warning_by_entity: dict[str, int] = {}
+    for item in queue_items:
+        if item.ready_to_publish:
+            ready_by_entity[item.entity] = ready_by_entity.get(item.entity, 0) + 1
+        else:
+            blocked_by_entity[item.entity] = blocked_by_entity.get(item.entity, 0) + 1
+        if item.warning_count:
+            warning_by_entity[item.entity] = warning_by_entity.get(item.entity, 0) + 1
+
+    for entity, summary in payload.by_entity.items():
+        summary.ready_to_publish = ready_by_entity.get(entity, 0)
+        summary.blocked = blocked_by_entity.get(entity, 0)
+        summary.warnings = warning_by_entity.get(entity, 0)
+
+    payload.overview = DashboardOverview(
+        total_items=sum(item.total for item in payload.by_entity.values()),
+        draft_items=sum(item.draft for item in payload.by_entity.values()),
+        published_items=sum(item.published for item in payload.by_entity.values()),
+        archived_items=sum(item.archived for item in payload.by_entity.values()),
+        premium_items=sum(item.premium for item in payload.by_entity.values()),
+        ready_to_publish=sum(item.ready_to_publish for item in payload.by_entity.values()),
+        blocked_items=sum(item.blocked for item in payload.by_entity.values()),
+        warning_items=sum(item.warnings for item in payload.by_entity.values()),
+    )
+    payload.audio_health = _audio_health_summary(db)
     return payload
+
+
+def publish_queue(
+    db: Session,
+    *,
+    entity: str | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> PublishQueueResponse:
+    items = _collect_publish_queue_items(db, entity=entity, q=q)
+    return PublishQueueResponse(items=items[offset : offset + min(limit, 200)], total=len(items), limit=limit, offset=offset)
+
+
+def validation_center(
+    db: Session,
+    *,
+    entity: str | None = None,
+    q: str | None = None,
+    level: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> ValidationCenterResponse:
+    items = _collect_validation_center_items(db, entity=entity, q=q, level=level)
+    return ValidationCenterResponse(items=items[offset : offset + min(limit, 200)], total=len(items), limit=limit, offset=offset)
+
+
+def audit_trail(
+    db: Session,
+    *,
+    entity: str | None = None,
+    item_id: int | None = None,
+    action: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> AuditTrailResponse:
+    query = db.query(AdminAuditLog)
+    if entity:
+        query = query.filter(AdminAuditLog.entity_type == entity)
+    if item_id is not None:
+        query = query.filter(AdminAuditLog.entity_id == item_id)
+    if action:
+        query = query.filter(AdminAuditLog.action == action)
+
+    total = query.count()
+    rows = query.order_by(AdminAuditLog.created_at.desc(), AdminAuditLog.id.desc()).offset(offset).limit(min(limit, 200)).all()
+    admin_ids = {row.admin_user_id for row in rows if row.admin_user_id is not None}
+    admin_emails = {}
+    if admin_ids:
+        admin_emails = {admin.id: admin.email for admin in db.query(AdminUser).filter(AdminUser.id.in_(admin_ids)).all()}
+
+    return AuditTrailResponse(
+        items=[
+            AuditTrailItem(
+                id=row.id,
+                created_at=row.created_at,
+                admin_user_id=row.admin_user_id,
+                admin_email=admin_emails.get(row.admin_user_id),
+                action=row.action,
+                entity_type=row.entity_type,
+                entity_id=row.entity_id,
+                request_id=row.request_id,
+                before=row.before,
+                after=row.after,
+            )
+            for row in rows
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def record_admin_audit_event(
+    db: Session,
+    *,
+    admin: AdminUser,
+    action: str,
+    entity: str,
+    entity_id: int | None = None,
+    before: dict[str, Any] | None = None,
+    after: dict[str, Any] | None = None,
+    request_id: str | None = None,
+) -> None:
+    _audit(db, admin, action, entity, entity_id, before, after, request_id)
 
 
 def list_entities(
@@ -351,9 +499,14 @@ def validate_payload_entity(db: Session, entity: str, payload: dict[str, Any]) -
 def validate_current_entity(db: Session, entity: str, item_id: int) -> ValidationResult:
     row = _get_with_loaders(db, entity, item_id)
     detail = serialize_entity(entity, row, detail=True)
+    return _validate_detail_entity(db, entity, detail, row=row)
+
+
+def _validate_detail_entity(db: Session, entity: str, detail: dict[str, Any], *, row: Any | None = None) -> ValidationResult:
     data = {key: value for key, value in detail.items() if key not in {"relation_ids", "children", "display_label", "meta"}}
     validation = ensure_publishable(db, entity, data, relation_ids=detail.get("relation_ids") or {}, children=detail.get("children") or {})
     _append_protected_audio_issues(validation, entity, data, detail.get("children") or {})
+    _append_required_audio_issues(validation, entity, row, detail)
     return validation
 
 
@@ -401,26 +554,25 @@ def bulk_update_status(
 def build_preview(db: Session, entity: str, item_id: int, *, viewer_access: str = "free") -> PreviewResponse:
     row = _get_with_loaders(db, entity, item_id)
     detail = serialize_entity(entity, row, detail=True)
-    settings = get_settings()
-    deep_link = None
-    if entity == "lessons":
-        deep_link = f"{settings.telegram_webapp_url}?screen=learn&lesson={row.id}"
-    elif entity == "scenarios":
-        deep_link = f"{settings.telegram_webapp_url}?screen=scenarios&scenario={row.slug}"
-    elif entity == "dialogues":
-        deep_link = f"{settings.telegram_webapp_url}?screen=scenarios&dialogue={row.id}"
     return PreviewResponse(
         entity=entity,
         entity_id=item_id,
         viewer_access=viewer_access,
         learner_visible=_learner_visible_dict(detail),
         locked_for_viewer=detail.get("resolved_access_state") == "premium" and viewer_access != "premium",
-        deep_link=deep_link,
+        deep_link=_entity_deep_link(entity, row),
         data=_preview_payload(entity, detail),
     )
 
 
-def export_entity(db: Session, entity: str, *, format_name: str = "json") -> ExportResponse:
+def export_entity(
+    db: Session,
+    entity: str,
+    *,
+    format_name: str = "json",
+    admin: AdminUser | None = None,
+    request_id: str | None = None,
+) -> ExportResponse:
     rows = _export_rows(db, entity)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     if format_name == "csv":
@@ -441,7 +593,7 @@ def export_entity(db: Session, entity: str, *, format_name: str = "json") -> Exp
         )
         mime_type = "application/json"
         extension = "json"
-    return ExportResponse(
+    response = ExportResponse(
         entity=entity,
         format=format_name,
         filename=f"{entity}-{timestamp}.{extension}",
@@ -449,6 +601,10 @@ def export_entity(db: Session, entity: str, *, format_name: str = "json") -> Exp
         content=content,
         count=len(rows),
     )
+    if admin is not None:
+        _audit(db, admin, "export", entity, None, None, {"format": format_name, "count": len(rows)}, request_id)
+        db.commit()
+    return response
 
 
 def import_entity(db: Session, entity: str, request: ImportRequest, admin: AdminUser, request_id: str | None = None) -> ImportResult:
@@ -851,6 +1007,175 @@ def _legacy_audio_lesson_asset(data: dict[str, Any]) -> bool:
         return False
     clean_url = url.split("?", 1)[0].split("#", 1)[0]
     return Path(clean_url).suffix.lower() in ALLOWED_AUDIO_EXTENSIONS
+
+
+def _collect_publish_queue_items(db: Session, *, entity: str | None = None, q: str | None = None) -> list[PublishQueueItem]:
+    items: list[PublishQueueItem] = []
+    for entity_name in _scannable_entities(entity):
+        config = _config(entity_name)
+        model = config.model
+        if not hasattr(model, "status"):
+            continue
+        query = db.query(model)
+        for loader in config.detail_loaders:
+            query = query.options(loader)
+        if hasattr(model, "is_deleted"):
+            query = query.filter(model.is_deleted.is_(False))
+        rows = query.filter(model.status == "draft").order_by(getattr(model, "updated_at", model.id).desc(), model.id.desc()).all()
+        for row in rows:
+            detail = serialize_entity(entity_name, row, detail=True)
+            validation = _validate_detail_entity(db, entity_name, detail, row=row)
+            label = detail.get("display_label") or _display_label(entity_name, row)
+            if q and q.lower() not in str(label).lower():
+                continue
+            error_count = sum(1 for issue in validation.issues if issue.level == "error")
+            warning_count = sum(1 for issue in validation.issues if issue.level == "warning")
+            items.append(
+                PublishQueueItem(
+                    entity=entity_name,
+                    entity_id=row.id,
+                    label=str(label),
+                    status=getattr(row, "status", None),
+                    updated_at=getattr(row, "updated_at", None),
+                    ready_to_publish=error_count == 0,
+                    error_count=error_count,
+                    warning_count=warning_count,
+                    deep_link=_entity_deep_link(entity_name, row),
+                    issues=validation.issues,
+                )
+            )
+    items.sort(key=lambda item: ((0 if not item.ready_to_publish else 1), -(item.updated_at.timestamp() if item.updated_at else 0), item.entity, item.entity_id))
+    return items
+
+
+def _collect_validation_center_items(
+    db: Session,
+    *,
+    entity: str | None = None,
+    q: str | None = None,
+    level: str | None = None,
+) -> list[ValidationCenterItem]:
+    items: list[ValidationCenterItem] = []
+    for entity_name in _scannable_entities(entity):
+        config = _config(entity_name)
+        query = db.query(config.model)
+        for loader in config.detail_loaders:
+            query = query.options(loader)
+        if hasattr(config.model, "is_deleted"):
+            query = query.filter(config.model.is_deleted.is_(False))
+        rows = query.order_by(getattr(config.model, "updated_at", config.model.id).desc(), config.model.id.desc()).all()
+        for row in rows:
+            detail = serialize_entity(entity_name, row, detail=True)
+            validation = _validate_detail_entity(db, entity_name, detail, row=row)
+            filtered_issues = validation.issues if not level else [issue for issue in validation.issues if issue.level == level]
+            if not filtered_issues:
+                continue
+            label = detail.get("display_label") or _display_label(entity_name, row)
+            if q and q.lower() not in str(label).lower():
+                continue
+            items.append(
+                ValidationCenterItem(
+                    entity=entity_name,
+                    entity_id=row.id,
+                    label=str(label),
+                    status=getattr(row, "status", None),
+                    updated_at=getattr(row, "updated_at", None),
+                    error_count=sum(1 for issue in filtered_issues if issue.level == "error"),
+                    warning_count=sum(1 for issue in filtered_issues if issue.level == "warning"),
+                    deep_link=_entity_deep_link(entity_name, row),
+                    issues=filtered_issues,
+                )
+            )
+    items.sort(key=lambda item: (-item.error_count, -item.warning_count, -(item.updated_at.timestamp() if item.updated_at else 0), item.entity, item.entity_id))
+    return items
+
+
+def _scannable_entities(entity: str | None = None) -> list[str]:
+    if entity:
+        return [] if entity in SCAN_EXCLUDED_ENTITIES else [entity]
+    return [name for name, config in ENTITY_CONFIGS.items() if name not in SCAN_EXCLUDED_ENTITIES and hasattr(config.model, "status")]
+
+
+def _audio_health_summary(db: Session) -> dict[str, int]:
+    settings = get_settings()
+    rows = db.query(AudioAsset).filter(AudioAsset.is_deleted.is_(False)).all()
+    summary = {"healthy": 0, "broken": 0, "missing": 0, "disabled": 0, "unpublished": 0, "expiring_soon": 0}
+    for row in rows:
+        health = audio_asset_admin_health(row, settings)
+        state = str(health.get("state") or "healthy")
+        if state not in summary:
+            summary[state] = 0
+        summary[state] += 1
+        if health.get("expiring_soon"):
+            summary["expiring_soon"] += 1
+    return summary
+
+
+def _append_required_audio_issues(validation: ValidationResult, entity: str, row: Any | None, detail: dict[str, Any]) -> None:
+    issues: list[ValidationIssue] = []
+    if entity == "exercises" and _exercise_requires_audio(detail):
+        audio_assets = getattr(row, "audio_assets", []) if row is not None else []
+        has_audio = any(not getattr(asset, "is_deleted", False) and asset.status == "published" and asset.compliance_state == "active" for asset in audio_assets)
+        if not has_audio:
+            issues.append(
+                ValidationIssue(
+                    level="error",
+                    code="missing_audio_reference",
+                    field="audio_assets",
+                    message="Listening exercises require an active published Audio Asset before publish.",
+                )
+            )
+    if entity == "lessons":
+        exercises = detail.get("exercises") or []
+        for index, exercise in enumerate(exercises, start=1):
+            if not _exercise_requires_audio(exercise):
+                continue
+            if not _exercise_has_audio_reference(row, exercise.get("id")):
+                issues.append(
+                    ValidationIssue(
+                        level="error",
+                        code="missing_audio_reference",
+                        field=f"exercises[{index}]",
+                        message=f"Listening exercise {exercise.get('slug') or exercise.get('id') or index} is missing a published Audio Asset.",
+                    )
+                )
+    if not issues:
+        return
+    validation.valid = False
+    existing = {(issue.code, issue.field, issue.message) for issue in validation.issues}
+    for issue in issues:
+        signature = (issue.code, issue.field, issue.message)
+        if signature not in existing:
+            validation.issues.append(issue)
+            existing.add(signature)
+
+
+def _exercise_requires_audio(detail: dict[str, Any]) -> bool:
+    return str(detail.get("exercise_type") or "") in {"listen_and_choose", "listen_and_order", "listen_and_match"}
+
+
+def _exercise_has_audio_reference(row: Any | None, exercise_id: int | None) -> bool:
+    if row is None or exercise_id is None:
+        return False
+    exercises = getattr(row, "exercises", []) or []
+    for exercise in exercises:
+        if exercise.id != exercise_id:
+            continue
+        for asset in getattr(exercise, "audio_assets", []) or []:
+            if not getattr(asset, "is_deleted", False) and asset.status == "published" and asset.compliance_state == "active":
+                return True
+    return False
+
+
+def _entity_deep_link(entity: str, row: Any) -> str | None:
+    settings = get_settings()
+    if entity == "lessons":
+        return f"{settings.telegram_webapp_url}?screen=learn&lesson={row.id}"
+    if entity == "scenarios":
+        return f"{settings.telegram_webapp_url}?screen=scenarios&scenario={row.slug}"
+    if entity == "dialogues":
+        return f"{settings.telegram_webapp_url}?screen=scenarios&dialogue={row.id}"
+    return None
 
 
 def _apply_search(query, entity: str, q: str):

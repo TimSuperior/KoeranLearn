@@ -9,6 +9,8 @@ from app.core.config import get_settings
 from app.core.db import SessionLocal, engine
 from app.core.logging import configure_logging
 from app.models.schema import AnalyticsEvent, Reminder, User
+from app.services.localization import normalize_language
+from app.services.localization_catalog import catalog_text
 
 configure_logging(get_settings().log_level)
 logger = logging.getLogger("reminder-worker")
@@ -61,6 +63,7 @@ def run_once() -> int:
 
 
 def _message(language: str) -> str:
+    return catalog_text("reminder", "daily_nudge", normalize_language(language))
     messages = {
         "ru": "Сегодняшний корейский: 5 минут урока или повторения?",
         "uz": "Bugungi koreys tili: 5 daqiqa dars yoki takrorlash?",

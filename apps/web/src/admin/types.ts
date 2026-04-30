@@ -3,11 +3,14 @@ export type AdminEntityKey =
   | "courses"
   | "modules"
   | "lessons"
+  | "lesson-blocks"
   | "vocabulary"
   | "grammar"
   | "scenarios"
   | "dialogues"
+  | "dialogue-lines"
   | "exercises"
+  | "exercise-options"
   | "audio-assets"
   | "example-sentences"
   | "tags"
@@ -93,10 +96,97 @@ export type AdminListResponse = {
   offset: number;
 };
 
+export type DashboardEntitySummary = {
+  total: number;
+  draft: number;
+  published: number;
+  archived: number;
+  premium: number;
+  ready_to_publish: number;
+  blocked: number;
+  warnings: number;
+};
+
+export type DashboardOverview = {
+  total_items: number;
+  draft_items: number;
+  published_items: number;
+  archived_items: number;
+  premium_items: number;
+  ready_to_publish: number;
+  blocked_items: number;
+  warning_items: number;
+};
+
 export type DashboardSummary = {
   entities: Record<string, number>;
   drafts: Record<string, number>;
   premium: Record<string, number>;
+  by_entity: Record<string, DashboardEntitySummary>;
+  overview: DashboardOverview;
+  publish_queue_total: number;
+  validation_issue_total: number;
+  validation_warning_total: number;
+  audio_health: Record<string, number>;
+};
+
+export type PublishQueueItem = {
+  entity: string;
+  entity_id: number;
+  label: string;
+  status?: string | null;
+  updated_at?: string | null;
+  ready_to_publish: boolean;
+  error_count: number;
+  warning_count: number;
+  deep_link?: string | null;
+  issues: ValidationIssue[];
+};
+
+export type PublishQueueResponse = {
+  items: PublishQueueItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type ValidationCenterItem = {
+  entity: string;
+  entity_id: number;
+  label: string;
+  status?: string | null;
+  updated_at?: string | null;
+  error_count: number;
+  warning_count: number;
+  deep_link?: string | null;
+  issues: ValidationIssue[];
+};
+
+export type ValidationCenterResponse = {
+  items: ValidationCenterItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type AuditTrailItem = {
+  id: number;
+  created_at: string;
+  admin_user_id?: number | null;
+  admin_email?: string | null;
+  action: string;
+  entity_type: string;
+  entity_id?: number | null;
+  request_id?: string | null;
+  before?: Record<string, any> | null;
+  after?: Record<string, any> | null;
+};
+
+export type AuditTrailResponse = {
+  items: AuditTrailItem[];
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 export type AdminFilters = {

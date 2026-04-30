@@ -27,6 +27,7 @@ class TelegramUserPayload(BaseModel):
 class AuthResponse(BaseModel):
     telegram_id: str
     interface_language: str
+    explanation_language: str
     is_onboarded: bool
     is_premium: bool
     access_token: str
@@ -44,6 +45,7 @@ class OnboardingStartRequest(BaseModel):
 
 class OnboardingCompleteRequest(OnboardingStartRequest):
     interface_language: Language
+    explanation_language: Language | None = None
     goal: str
     level: str
     daily_minutes: int = Field(ge=5, le=30)
@@ -55,6 +57,7 @@ class OnboardingCompleteRequest(OnboardingStartRequest):
 class UserSummary(BaseModel):
     telegram_id: str
     interface_language: str
+    explanation_language: str
     is_onboarded: bool
     is_premium: bool
     xp: int
@@ -258,6 +261,7 @@ class ExerciseSubmitResponse(BaseModel):
     is_correct: bool
     expected: Any
     explanation: dict[str, str]
+    validator: str = "exact"
     lesson_completed: bool = False
     xp_awarded: int = 0
 
@@ -295,6 +299,7 @@ class ProgressDTO(BaseModel):
     current_lesson: dict[str, Any] | None
     last_completed_lesson: dict[str, Any] | None = None
     difficult_topics: list[dict[str, Any]]
+    review_overview: dict[str, Any] = {}
 
 
 class GrammarDTO(BaseModel):
@@ -546,6 +551,9 @@ class QuizStartRequest(BaseModel):
     topic: str | None = None
     limit: int = Field(default=5, ge=1, le=20)
     mistakes_only: bool = False
+    due_only: bool = False
+    focus: str | None = None
+    require_audio: bool = False
 
 
 class QuizSessionDTO(BaseModel):

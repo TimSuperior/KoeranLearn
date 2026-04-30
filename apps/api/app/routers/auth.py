@@ -54,6 +54,7 @@ def _auth_response(db: Session, request: Request, response: Response, user, sett
     return AuthResponse(
         telegram_id=user.telegram_id,
         interface_language=user.interface_language,
+        explanation_language=(user.preferences.explanation_language if user.preferences else user.interface_language),
         is_onboarded=user.is_onboarded,
         is_premium=user.is_premium,
         access_token=access_token,
@@ -131,6 +132,7 @@ def me(user=Depends(get_current_user), db: Session = Depends(get_db)) -> UserSum
     return UserSummary(
         telegram_id=user.telegram_id,
         interface_language=user.interface_language,
+        explanation_language=(user.preferences.explanation_language if user.preferences else user.interface_language),
         is_onboarded=user.is_onboarded,
         is_premium=user.is_premium,
         xp=user.xp,

@@ -3,6 +3,7 @@ from functools import lru_cache
 from sqlalchemy.orm import Session
 
 from app.models.schema import LocalizationEntry
+from app.services.localization_catalog import catalog_bundle, catalog_text, iter_catalog_rows
 
 SUPPORTED_LANGUAGES = ("ru", "uz", "en")
 DEFAULT_LANGUAGE = "en"
@@ -32,6 +33,7 @@ class LocalizationService:
 
     def bundle(self, namespace: str, language: str) -> dict[str, str]:
         language = normalize_language(language)
+        values = catalog_bundle(namespace, language)
         entries = (
             self.db.query(LocalizationEntry)
             .filter(
@@ -42,7 +44,6 @@ class LocalizationService:
             )
             .all()
         )
-        values: dict[str, str] = {}
         for entry in entries:
             if entry.language == DEFAULT_LANGUAGE:
                 values[entry.key] = entry.value
@@ -80,7 +81,7 @@ class LocalizationService:
             )
             if entry:
                 return entry.value
-        return fallback or key
+        return catalog_text(namespace, key, language, fallback=fallback)
 
 
 def missing_keys(db: Session, namespace: str | None = None) -> list[dict[str, str]]:
@@ -89,6 +90,8 @@ def missing_keys(db: Session, namespace: str | None = None) -> list[dict[str, st
         query = query.filter(LocalizationEntry.namespace == namespace)
     rows = query.all()
     by_key: dict[tuple[str, str], set[str]] = {}
+    for entry_namespace, key, language in iter_catalog_rows(namespace):
+        by_key.setdefault((entry_namespace, key), set()).add(language)
     for row in rows:
         by_key.setdefault((row.namespace, row.key), set()).add(row.language)
     missing: list[dict[str, str]] = []

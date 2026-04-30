@@ -5,6 +5,7 @@ export type Localized = Record<Language, string>;
 export type AuthUser = {
   telegram_id: string;
   interface_language: Language;
+  explanation_language: Language;
   is_onboarded: boolean;
   is_premium: boolean;
   access_token: string;
@@ -50,6 +51,15 @@ export type Exercise = {
   order_index: number;
   is_premium: boolean;
   options: ExerciseOption[];
+};
+
+export type ExerciseFeedback = {
+  is_correct: boolean;
+  expected: unknown;
+  explanation: Localized;
+  validator: string;
+  lesson_completed?: boolean;
+  xp_awarded?: number;
 };
 
 export type LessonBlock = {
@@ -193,6 +203,7 @@ export type Progress = {
   } | null;
   last_completed_lesson: { id: number; title: Localized; slug: string } | null;
   difficult_topics: { topic: string }[];
+  review_overview: ReviewOverview;
 };
 
 export type StudyPlan = {
@@ -270,6 +281,49 @@ export type ReviewItem = {
   mastery_status: string;
   mistake_count: number;
   content: Record<string, unknown>;
+};
+
+export type ReviewInsightItem = {
+  review_item_id: number;
+  item_type: string;
+  item_id: number;
+  label: string;
+  exercise_type: string | null;
+  difficulty: string | null;
+  topic: string | null;
+  mistake_count: number;
+  mastery_status: string;
+  next_review_at: string;
+  has_audio: boolean;
+};
+
+export type ReviewGrammarInsight = {
+  key: string;
+  label: string;
+  mistakes: number;
+  items: number;
+};
+
+export type ReviewExerciseBreakdown = {
+  exercise_type: string;
+  count: number;
+};
+
+export type ReviewGuidedSession = {
+  mode: "due" | "mistakes" | "vocab" | "grammar" | "mixed" | "listening";
+  title: string;
+  description: string;
+  item_count: number;
+  size: number;
+  tone: "accent" | "success" | "warning" | "danger" | "neutral";
+};
+
+export type ReviewOverview = {
+  weak_items: ReviewInsightItem[];
+  weak_grammar: ReviewGrammarInsight[];
+  repeated_mistakes: ReviewInsightItem[];
+  exercise_type_breakdown: ReviewExerciseBreakdown[];
+  guided_sessions: ReviewGuidedSession[];
 };
 
 export type ScenarioProgress = {

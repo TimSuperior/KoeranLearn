@@ -1,4 +1,5 @@
 SUPPORTED_LANGUAGES = ("ru", "uz", "en")
+BUNDLE_CACHE: dict[str, dict[str, str]] = {}
 
 
 TEXT = {
@@ -418,6 +419,10 @@ COMMANDS = {
 TOP_LEVEL_ACTIONS = ("lesson", "review", "dialogue", "library", "quiz", "progress", "streak", "settings", "help", "app")
 
 
+def cache_bundle(language: str, bundle: dict[str, str]) -> None:
+    BUNDLE_CACHE[normalize_language(language)] = dict(bundle)
+
+
 def normalize_language(language: str | None = "en") -> str:
     if language in SUPPORTED_LANGUAGES:
         return str(language)
@@ -426,7 +431,8 @@ def normalize_language(language: str | None = "en") -> str:
 
 def tr(key: str, language: str | None = "en", **kwargs: str | int | float) -> str:
     lang = normalize_language(language)
-    template = TEXT.get(key, {}).get(lang) or TEXT.get(key, {}).get("en") or key
+    bundle = BUNDLE_CACHE.get(lang, {})
+    template = bundle.get(f"text.{key}") or TEXT.get(key, {}).get(lang) or TEXT.get(key, {}).get("en") or key
     if kwargs:
         return template.format(**kwargs)
     return template
@@ -434,12 +440,14 @@ def tr(key: str, language: str | None = "en", **kwargs: str | int | float) -> st
 
 def button(key: str, language: str | None = "en") -> str:
     lang = normalize_language(language)
-    return BUTTONS.get(key, {}).get(lang) or BUTTONS.get(key, {}).get("en") or key
+    bundle = BUNDLE_CACHE.get(lang, {})
+    return bundle.get(f"button.{key}") or BUTTONS.get(key, {}).get(lang) or BUTTONS.get(key, {}).get("en") or key
 
 
 def topic_label(topic: str, language: str | None = "en") -> str:
     lang = normalize_language(language)
-    return TOPICS.get(topic, {}).get(lang) or TOPICS.get(topic, {}).get("en") or topic.replace("_", " ")
+    bundle = BUNDLE_CACHE.get(lang, {})
+    return bundle.get(f"topic.{topic}") or TOPICS.get(topic, {}).get(lang) or TOPICS.get(topic, {}).get("en") or topic.replace("_", " ")
 
 
 def language_name(language_code: str, interface_language: str | None = "en") -> str:

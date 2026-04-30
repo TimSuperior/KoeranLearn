@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { LessonPlayer } from "../components/LessonPlayer";
 import { ErrorState, LoadingCard } from "../components/ui";
 import { api } from "../lib/api";
-import { t } from "../lib/format";
+import { useI18n } from "../lib/i18n";
 import type { AppRoute } from "../lib/routes";
 import type { AuthUser, Lesson } from "../types";
 
@@ -15,6 +15,7 @@ export function LearnScreen({
   lessonId?: number;
   onNavigate: (route: AppRoute) => void;
 }) {
+  const { content, ui } = useI18n();
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [moduleTitle, setModuleTitle] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -34,10 +35,10 @@ export function LearnScreen({
       .then(([lessonValue, plan]) => {
         if (cancelled) return;
         setLesson(lessonValue);
-        setModuleTitle(plan?.module ? t(plan.module.title, user.interface_language, "Guided lesson") : "Guided lesson");
+        setModuleTitle(plan?.module ? content(plan.module.title, ui("lesson.guided", "Guided lesson")) : ui("lesson.guided", "Guided lesson"));
       })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Could not load your lesson.");
+      .catch(() => {
+        if (!cancelled) setError(ui("lesson.load_error", "Could not load your lesson."));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -46,10 +47,10 @@ export function LearnScreen({
     return () => {
       cancelled = true;
     };
-  }, [lessonId, user.interface_language, user.telegram_id]);
+  }, [content, lessonId, ui, user.telegram_id]);
 
   if (loading) {
-    return <LoadingCard label="Loading lesson" />;
+    return <LoadingCard label={ui("lesson.loading", "Loading lesson")} />;
   }
 
   if (error) {

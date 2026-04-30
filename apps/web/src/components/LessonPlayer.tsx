@@ -1,26 +1,21 @@
 import { BookOpenCheck, ChevronLeft, ChevronRight, Ear, GraduationCap, Languages, MessageCircleMore, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { AudioPlayer, Button, EmptyState, HeroCard, SectionHeading, StatusChip, Surface } from "./ui";
+
+import { useI18n } from "../lib/i18n";
 import { track } from "../lib/analytics";
-import { t } from "../lib/format";
+import { api } from "../lib/api";
+import { interpolate } from "../lib/format";
 import { clearLessonResume, loadLessonResume, saveLessonResume } from "../lib/local-state";
 import type { AppRoute } from "../lib/routes";
-import { api } from "../lib/api";
-import type { AudioCue, AuthUser, Language, Lesson, LessonAsset, LessonBlock } from "../types";
+import type { AudioCue, AuthUser, ExerciseFeedback, Lesson, LessonAsset, LessonBlock } from "../types";
+import { ExerciseFeedbackCard } from "./exercises/ExerciseFeedbackCard";
 import { ExerciseRenderer } from "./exercises/ExerciseRenderer";
+import { AudioPlayer, Button, EmptyState, HeroCard, SectionHeading, StatusChip, Surface } from "./ui";
 
 type Step =
   | { kind: "overview" }
   | { kind: "block"; block: LessonBlock }
   | { kind: "exercise"; exerciseIndex: number };
-
-type Feedback = {
-  is_correct: boolean;
-  expected: unknown;
-  explanation: Record<string, string>;
-  lesson_completed: boolean;
-  xp_awarded: number;
-};
 
 function blockAudioSources(block: LessonBlock): string[] {
   return [block.payload.audio_asset_url, block.payload.audio_url].filter(Boolean).map(String);
@@ -47,8 +42,9 @@ export function LessonPlayer({
   onCompleted: () => void;
   moduleTitle?: string;
 }) {
+  const { content, explanationLanguage, ui } = useI18n();
   const [stepIndex, setStepIndex] = useState(0);
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [feedback, setFeedback] = useState<ExerciseFeedback | null>(null);
   const [busy, setBusy] = useState(false);
   const [complete, setComplete] = useState(false);
 
@@ -76,7 +72,7 @@ export function LessonPlayer({
   }, [complete, lesson, stepIndex, user.telegram_id]);
 
   if (!lesson) {
-    return <EmptyState title="No active lesson" description="The next guided lesson will appear here as soon as it is unlocked." action={<Button onClick={() => onNavigate({ screen: "home" })}>Back home</Button>} />;
+    return <EmptyState title={ui("lesson.no_active_title", "No active lesson")} description={ui("lesson.no_active_description", "The next guided lesson will appear here as soon as it is unlocked.")} action={<Button onClick={() => onNavigate({ screen: "home" })}>{ui("action.back_home", "Back home")}</Button>} />;
   }
 
   const currentLesson = lesson;
@@ -99,7 +95,12 @@ export function LessonPlayer({
   }
 
   function nextStep() {
-    if (feedback?.lesson_completed) {
+    if (!feedback) {
+      setStepIndex((current) => Math.min(current + 1, steps.length - 1));
+      return;
+    }
+
+    if (feedback.lesson_completed) {
       clearLessonResume(user.telegram_id, currentLesson.id);
       setComplete(true);
       setFeedback(null);
@@ -111,15 +112,12 @@ export function LessonPlayer({
       return;
     }
 
-    if (feedback?.is_correct) {
+    if (feedback.is_correct) {
       setFeedback(null);
       setStepIndex((current) => Math.min(current + 1, steps.length - 1));
       return;
     }
-
-    if (!feedback) {
-      setStepIndex((current) => Math.min(current + 1, steps.length - 1));
-    }
+    setFeedback(null);
   }
 
   function previousStep() {
@@ -133,16 +131,16 @@ export function LessonPlayer({
     if (activeStep.kind === "overview") {
       return (
         <div className="space-y-4">
-          <HeroCard eyebrow={moduleTitle || "Guided lesson"} title={t(currentLesson.title, user.interface_language, "Lesson")} description={t(currentLesson.summary, user.interface_language, "Guided Korean lesson")}>
+          <HeroCard eyebrow={moduleTitle || ui("lesson.guided", "Guided lesson")} title={content(currentLesson.title, ui("route.lesson", "Lesson"))} description={content(currentLesson.summary, ui("lesson.guided", "Guided lesson"))}>
             <div className="flex flex-wrap gap-2">
               <StatusChip tone="accent">{currentLesson.estimated_minutes} min</StatusChip>
               <StatusChip tone="neutral">{currentLesson.difficulty}</StatusChip>
               <StatusChip tone="neutral">{currentLesson.politeness_level.replaceAll("_", " ")}</StatusChip>
-              {currentLesson.has_audio ? <StatusChip tone="success">Audio</StatusChip> : null}
-              {lockedLessonAudio ? <StatusChip tone="warning">Premium audio</StatusChip> : null}
+              {currentLesson.has_audio ? <StatusChip tone="success">{ui("lesson.listen", "Listen")}</StatusChip> : null}
+              {lockedLessonAudio ? <StatusChip tone="warning">{ui("lesson.premium", "Premium")} audio</StatusChip> : null}
             </div>
             {currentLesson.korean_text ? <p className="mt-4 text-2xl font-semibold leading-relaxed text-[color:var(--app-text)]">{currentLesson.korean_text}</p> : null}
-            <p className="mt-4 text-sm leading-7 text-[color:var(--app-muted)]">{t(currentLesson.explanation, user.interface_language)}</p>
+            <p className="mt-4 text-sm leading-7 text-[color:var(--app-muted)]">{content(currentLesson.explanation)}</p>
             {currentLesson.objectives.length ? (
               <div className="mt-4 grid gap-2">
                 {currentLesson.objectives.map((objective) => (
@@ -156,14 +154,14 @@ export function LessonPlayer({
 
           {lessonAudio.length ? (
             <Surface>
-              <SectionHeading eyebrow="Listen" title="Lesson audio" description="Use the audio before you answer to tune your ear to the target pattern." />
+              <SectionHeading eyebrow={ui("lesson.listen", "Listen")} title={ui("lesson.lesson_audio", "Lesson audio")} description={ui("lesson.lesson_audio_description", "Use the audio before you answer to tune your ear to the target pattern.")} />
               <div className="mt-4 space-y-3">
                 {lessonAudio.map((asset) => (
                   <AudioPlayer
                     key={asset.id}
                     src={asset.url}
                     label={assetLabel(asset)}
-                    language={user.interface_language}
+                    language={explanationLanguage}
                     completed={complete}
                   />
                 ))}
@@ -172,12 +170,12 @@ export function LessonPlayer({
           ) : null}
           {lockedLessonAudio ? (
             <Surface className="border-amber-500/20 bg-amber-500/5">
-              <SectionHeading eyebrow="Premium" title="Listening is locked" description="This lesson includes premium-only audio. Upgrade to unlock playback and transcript controls." />
+              <SectionHeading eyebrow={ui("lesson.premium", "Premium")} title={ui("lesson.listening_locked", "Listening is locked")} description={ui("lesson.listening_locked_description", "This lesson includes premium-only audio. Upgrade to unlock playback and transcript controls.")} />
             </Surface>
           ) : null}
           {currentLesson.audio_missing ? (
             <Surface className="border-coral/20 bg-coral/5">
-              <SectionHeading eyebrow="Audio issue" title="Some lesson audio is unavailable" description="Playback for one or more premium clips is temporarily unavailable. The rest of the lesson will keep working." />
+              <SectionHeading eyebrow={ui("lesson.audio_issue", "Audio issue")} title={ui("lesson.audio_issue", "Audio issue")} description={ui("lesson.audio_issue_description", "Playback for one or more premium clips is temporarily unavailable. The rest of the lesson will keep working.")} />
             </Surface>
           ) : null}
         </div>
@@ -190,26 +188,26 @@ export function LessonPlayer({
       const audioLocked = Boolean(activeStep.block.payload.audio_locked);
       return (
         <Surface>
-          <SectionHeading eyebrow={activeStep.block.block_type.replaceAll("_", " ")} title={t(activeStep.block.title, user.interface_language, activeStep.block.block_type.replaceAll("_", " "))} description={t(activeStep.block.body, user.interface_language)} />
+          <SectionHeading eyebrow={activeStep.block.block_type.replaceAll("_", " ")} title={content(activeStep.block.title, activeStep.block.block_type.replaceAll("_", " "))} description={content(activeStep.block.body)} />
           {audioItems.length ? (
             <div className="mt-4 space-y-3">
               {audioItems.map((item) => (
-                <AudioPlayer key={item.id} item={item} label="Audio prompt" language={user.interface_language} completed={complete} />
+                <AudioPlayer key={item.id} item={item} label={ui("lesson.audio_prompt", "Audio prompt")} language={explanationLanguage} completed={complete} />
               ))}
             </div>
           ) : null}
           {!audioItems.length && audio.length ? (
             <div className="mt-4 space-y-3">
               {audio.map((src, index) => (
-                <AudioPlayer key={`${src}-${index}`} src={src} label="Audio prompt" language={user.interface_language} completed={complete} />
+                <AudioPlayer key={`${src}-${index}`} src={src} label={ui("lesson.audio_prompt", "Audio prompt")} language={explanationLanguage} completed={complete} />
               ))}
             </div>
           ) : null}
-          {audioLocked ? <p className="mt-4 text-sm text-[color:var(--app-secondary)]">Premium audio is locked for this block.</p> : null}
-          {activeStep.block.payload.audio_missing ? <p className="mt-4 text-sm text-coral">This premium audio item is currently unavailable.</p> : null}
+          {audioLocked ? <p className="mt-4 text-sm text-[color:var(--app-secondary)]">{ui("lesson.listening_locked_description", "This lesson includes premium-only audio. Upgrade to unlock playback and transcript controls.")}</p> : null}
+          {activeStep.block.payload.audio_missing ? <p className="mt-4 text-sm text-coral">{ui("lesson.audio_issue_description", "Playback for one or more premium clips is temporarily unavailable. The rest of the lesson will keep working.")}</p> : null}
           {activeStep.block.block_type === "scenario_link" && activeStep.block.payload.scenario_id ? (
             <div className="mt-4">
-              <Button variant="secondary" onClick={() => onNavigate({ screen: "scenarios" })}>Open related scenario</Button>
+              <Button variant="secondary" onClick={() => onNavigate({ screen: "scenarios" })}>{ui("lesson.open_related_scenario", "Open related scenario")}</Button>
             </div>
           ) : null}
         </Surface>
@@ -223,54 +221,45 @@ export function LessonPlayer({
       <div className="space-y-4">
         {exerciseAudioItems.length ? (
           <Surface>
-            <SectionHeading eyebrow="Listen first" title="Audio cue" description="Replay the prompt before answering if you want a listening-first pass." />
+            <SectionHeading eyebrow={ui("lesson.listen_first", "Listen first")} title={ui("lesson.audio_cue", "Audio cue")} description={ui("lesson.audio_cue_description", "Replay the prompt before answering if you want a listening-first pass.")} />
             <div className="mt-4 space-y-3">
               {exerciseAudioItems.map((item, index) => (
-                <AudioPlayer key={item.id} item={item} label={`Prompt ${index + 1}`} language={user.interface_language} completed={Boolean(feedback?.is_correct)} />
+                <AudioPlayer key={item.id} item={item} label={`${ui("exercise.prompt", "Exercise prompt")} ${index + 1}`} language={explanationLanguage} completed={Boolean(feedback?.is_correct)} />
               ))}
             </div>
           </Surface>
         ) : null}
         {!exerciseAudioItems.length && exerciseAudio.length ? (
           <Surface>
-            <SectionHeading eyebrow="Listen first" title="Audio cue" description="Replay the prompt before answering if you want a listening-first pass." />
+            <SectionHeading eyebrow={ui("lesson.listen_first", "Listen first")} title={ui("lesson.audio_cue", "Audio cue")} description={ui("lesson.audio_cue_description", "Replay the prompt before answering if you want a listening-first pass.")} />
             <div className="mt-4 space-y-3">
               {exerciseAudio.map((src, index) => (
-                <AudioPlayer key={`${src}-${index}`} src={src} label={`Prompt ${index + 1}`} language={user.interface_language} completed={Boolean(feedback?.is_correct)} />
+                <AudioPlayer key={`${src}-${index}`} src={src} label={`${ui("exercise.prompt", "Exercise prompt")} ${index + 1}`} language={explanationLanguage} completed={Boolean(feedback?.is_correct)} />
               ))}
             </div>
           </Surface>
         ) : null}
         {exerciseAudioLocked ? (
           <Surface className="border-amber-500/20 bg-amber-500/5">
-            <SectionHeading eyebrow="Premium" title="Listening prompt locked" description="Upgrade to unlock this listening exercise." />
+            <SectionHeading eyebrow={ui("lesson.premium", "Premium")} title={ui("lesson.prompt_locked", "Listening prompt locked")} description={ui("lesson.prompt_locked_description", "Upgrade to unlock this listening exercise.")} />
           </Surface>
         ) : null}
         {currentExercise?.payload.audio_missing ? (
           <Surface className="border-coral/20 bg-coral/5">
-            <SectionHeading eyebrow="Audio issue" title="Prompt unavailable" description="This premium listening clip is temporarily unavailable, so the rest of the lesson continues without playback." />
+            <SectionHeading eyebrow={ui("lesson.audio_issue", "Audio issue")} title={ui("lesson.prompt_unavailable", "Prompt unavailable")} description={ui("lesson.prompt_unavailable_description", "This premium listening clip is temporarily unavailable, so the rest of the lesson continues without playback.")} />
           </Surface>
         ) : null}
 
-        {currentExercise ? <ExerciseRenderer exercise={currentExercise} language={user.interface_language} onSubmit={submit} disabled={busy || Boolean(feedback)} /> : null}
+        {currentExercise ? <ExerciseRenderer exercise={currentExercise} language={explanationLanguage} onSubmit={submit} disabled={busy || Boolean(feedback)} /> : null}
 
-        {feedback ? (
-          <Surface className={feedback.is_correct ? "border-emerald-500/20 bg-emerald-500/5" : "border-[color:var(--app-secondary)]/20 bg-[color:var(--app-secondary)]/5"}>
-            <SectionHeading
-              eyebrow={feedback.is_correct ? "Feedback" : "Try again"}
-              title={feedback.is_correct ? "Correct" : "Not quite yet"}
-              description={t(feedback.explanation, user.interface_language, feedback.is_correct ? "Good job." : "Review the explanation and try one more time.")}
-            />
-            {!feedback.is_correct ? (
-              <p className="mt-4 rounded-[18px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4 py-3 text-sm text-[color:var(--app-text)]">
-                Expected: {JSON.stringify(feedback.expected)}
-              </p>
-            ) : null}
-            <div className="mt-4 flex items-center justify-between gap-3">
-              <StatusChip tone={feedback.is_correct ? "success" : "warning"}>{feedback.xp_awarded} XP</StatusChip>
-              <Button onClick={nextStep}>{feedback.lesson_completed ? "See recap" : feedback.is_correct ? "Next step" : "Try again"}</Button>
-            </div>
-          </Surface>
+        {feedback && currentExercise ? (
+          <ExerciseFeedbackCard
+            exercise={currentExercise}
+            feedback={feedback}
+            language={explanationLanguage}
+            nextLabel={feedback.lesson_completed ? ui("lesson.see_recap", "See recap") : feedback.is_correct ? ui("lesson.next_step", "Next step") : ui("feedback.try_again", "Try again")}
+            onContinue={nextStep}
+          />
         ) : null}
       </div>
     );
@@ -279,14 +268,14 @@ export function LessonPlayer({
   if (complete) {
     return (
       <div className="space-y-4">
-        <HeroCard eyebrow={moduleTitle || "Lesson complete"} title={t(currentLesson.title, user.interface_language, "Lesson complete")} description="You finished the lesson. Save the key patterns now while recall is fresh.">
+        <HeroCard eyebrow={moduleTitle || ui("lesson.complete", "Lesson complete")} title={content(currentLesson.title, ui("lesson.complete", "Lesson complete"))} description={ui("lesson.complete_description", "You finished the lesson. Save the key patterns now while recall is fresh.")}>
           <div className="grid gap-3 sm:grid-cols-2">
             <Surface className="p-4">
               <div className="flex items-center gap-3">
                 <BookOpenCheck size={20} className="text-[color:var(--app-accent)]" />
                 <div>
-                  <p className="text-sm font-semibold">Lesson recap</p>
-                  <p className="text-sm leading-6 text-[color:var(--app-muted)]">{t(currentLesson.explanation, user.interface_language)}</p>
+                  <p className="text-sm font-semibold">{ui("lesson.recap", "Lesson recap")}</p>
+                  <p className="text-sm leading-6 text-[color:var(--app-muted)]">{content(currentLesson.explanation)}</p>
                 </div>
               </div>
             </Surface>
@@ -294,8 +283,8 @@ export function LessonPlayer({
               <div className="flex items-center gap-3">
                 <Sparkles size={20} className="text-[color:var(--app-accent)]" />
                 <div>
-                  <p className="text-sm font-semibold">{currentLesson.objectives.length} learning targets</p>
-                  <p className="text-sm leading-6 text-[color:var(--app-muted)]">Use review next to lock them in.</p>
+                  <p className="text-sm font-semibold">{interpolate(ui("lesson.learning_targets", "{count} learning targets"), { count: currentLesson.objectives.length })}</p>
+                  <p className="text-sm leading-6 text-[color:var(--app-muted)]">{ui("lesson.use_review_next", "Use review next to lock them in.")}</p>
                 </div>
               </div>
             </Surface>
@@ -304,13 +293,13 @@ export function LessonPlayer({
 
         {(currentLesson.related_vocabulary.length || currentLesson.related_grammar.length || currentLesson.related_scenarios.length) ? (
           <Surface>
-            <SectionHeading eyebrow="Linked references" title="Continue with connected material" description="Jump straight from the lesson into the vocabulary, grammar, or scenario that reinforces it." />
+            <SectionHeading eyebrow={ui("lesson.linked_references", "Linked references")} title={ui("lesson.continue_connected", "Continue with connected material")} description={ui("lesson.continue_connected", "Continue with connected material")} />
             <div className="mt-4 grid gap-3">
               {currentLesson.related_vocabulary.slice(0, 4).map((item) => (
                 <button key={`v-${item.id}`} type="button" onClick={() => onNavigate({ screen: "vocab", vocabId: item.id })} className="flex items-center justify-between rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4 py-3 text-left">
                   <div>
                     <p className="font-semibold">{item.korean}</p>
-                    <p className="text-sm text-[color:var(--app-muted)]">{t(item.translations, user.interface_language)}</p>
+                    <p className="text-sm text-[color:var(--app-muted)]">{content(item.translations)}</p>
                   </div>
                   <Languages size={18} className="text-[color:var(--app-accent)]" />
                 </button>
@@ -319,7 +308,7 @@ export function LessonPlayer({
                 <button key={`g-${item.id}`} type="button" onClick={() => onNavigate({ screen: "grammar", grammarId: item.id })} className="flex items-center justify-between rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4 py-3 text-left">
                   <div>
                     <p className="font-semibold">{item.korean_pattern}</p>
-                    <p className="text-sm text-[color:var(--app-muted)]">{t(item.title, user.interface_language)}</p>
+                    <p className="text-sm text-[color:var(--app-muted)]">{content(item.title)}</p>
                   </div>
                   <GraduationCap size={18} className="text-[color:var(--app-accent)]" />
                 </button>
@@ -327,8 +316,8 @@ export function LessonPlayer({
               {currentLesson.related_scenarios.slice(0, 2).map((item) => (
                 <button key={`s-${item.id}`} type="button" onClick={() => onNavigate({ screen: "scenarios", scenario: item.slug })} className="flex items-center justify-between rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4 py-3 text-left">
                   <div>
-                    <p className="font-semibold">{t(item.title, user.interface_language)}</p>
-                    <p className="text-sm text-[color:var(--app-muted)]">{t(item.description, user.interface_language)}</p>
+                    <p className="font-semibold">{content(item.title)}</p>
+                    <p className="text-sm text-[color:var(--app-muted)]">{content(item.description)}</p>
                   </div>
                   <MessageCircleMore size={18} className="text-[color:var(--app-accent)]" />
                 </button>
@@ -349,9 +338,9 @@ export function LessonPlayer({
               onNavigate({ screen: "home" });
             }}
           >
-            Back home
+            {ui("action.back_home", "Back home")}
           </Button>
-          <Button variant="secondary" onClick={() => onNavigate({ screen: "review", mode: "due", size: 5 })}>Review now</Button>
+          <Button variant="secondary" onClick={() => onNavigate({ screen: "review", mode: "due", size: 5 })}>{ui("lesson.review_now", "Review now")}</Button>
         </div>
       </div>
     );
@@ -362,12 +351,12 @@ export function LessonPlayer({
       <Surface>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--app-muted)]">{moduleTitle || "Guided lesson"}</p>
-            <h2 className="mt-2 text-xl font-semibold">{t(currentLesson.title, user.interface_language, "Lesson")}</h2>
-            <p className="mt-1 text-sm text-[color:var(--app-muted)]">{progressValue}/{progressTotal} steps • {currentLesson.estimated_minutes} min</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--app-muted)]">{moduleTitle || ui("lesson.guided", "Guided lesson")}</p>
+            <h2 className="mt-2 text-xl font-semibold">{content(currentLesson.title, ui("route.lesson", "Lesson"))}</h2>
+            <p className="mt-1 text-sm text-[color:var(--app-muted)]">{interpolate(ui("lesson.steps", "{current}/{total} steps"), { current: progressValue, total: progressTotal })} • {currentLesson.estimated_minutes} min</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {currentLesson.has_audio ? <StatusChip tone="success"><Ear size={12} /> Audio</StatusChip> : null}
+            {currentLesson.has_audio ? <StatusChip tone="success"><Ear size={12} /> {ui("lesson.listen", "Listen")}</StatusChip> : null}
             <StatusChip tone="neutral">{currentLesson.difficulty}</StatusChip>
           </div>
         </div>
@@ -382,11 +371,11 @@ export function LessonPlayer({
         <div className="flex items-center justify-between gap-2">
           <Button variant="secondary" disabled={stepIndex === 0} onClick={previousStep}>
             <ChevronLeft size={16} />
-            Previous
+            {ui("action.previous", "Previous")}
           </Button>
           {activeStep?.kind !== "exercise" ? (
             <Button onClick={nextStep}>
-              Next
+              {ui("action.next", "Next")}
               <ChevronRight size={16} />
             </Button>
           ) : null}

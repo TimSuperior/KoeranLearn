@@ -73,6 +73,7 @@ def _summary(db: Session, telegram_id: str) -> UserSummary:
     return UserSummary(
         telegram_id=user.telegram_id,
         interface_language=user.interface_language,
+        explanation_language=(user.preferences.explanation_language if user.preferences else user.interface_language),
         is_onboarded=user.is_onboarded,
         is_premium=user.is_premium,
         xp=user.xp,

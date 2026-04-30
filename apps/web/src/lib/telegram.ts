@@ -33,9 +33,13 @@ type ClickableControl = {
   offClick?: (handler: () => void) => void;
 };
 
+type TelegramUser = {
+  language_code?: string;
+};
+
 export type TelegramWebApp = {
   initData?: string;
-  initDataUnsafe?: { start_param?: string };
+  initDataUnsafe?: { start_param?: string; user?: TelegramUser };
   version?: string;
   colorScheme?: "light" | "dark";
   themeParams?: TelegramThemeParams;
@@ -104,6 +108,22 @@ export function getTelegramStartParam(): string | null {
   const fromInit = getTelegramWebApp()?.initDataUnsafe?.start_param;
   if (fromInit) return fromInit;
   return new URLSearchParams(window.location.search).get("tgWebAppStartParam");
+}
+
+function normalizeLanguageCode(language: string | null | undefined): "ru" | "uz" | "en" {
+  const value = String(language || "").toLowerCase();
+  if (value.startsWith("ru")) return "ru";
+  if (value.startsWith("uz")) return "uz";
+  return "en";
+}
+
+export function getTelegramLanguage(): "ru" | "uz" | "en" {
+  const fromTelegram = getTelegramWebApp()?.initDataUnsafe?.user?.language_code;
+  if (fromTelegram) return normalizeLanguageCode(fromTelegram);
+  if (typeof navigator !== "undefined") {
+    return normalizeLanguageCode(navigator.languages?.[0] || navigator.language);
+  }
+  return "en";
 }
 
 function applyInsets(prefix: string, insets?: Insets) {

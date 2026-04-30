@@ -27,16 +27,20 @@ export function topicLabel(value: string | null | undefined): string {
   return topicLabels[value] || humanize(value);
 }
 
-export function compactDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+export function interpolate(template: string, values: Record<string, string | number>): string {
+  return Object.entries(values).reduce((result, [key, value]) => result.replaceAll(`{${key}}`, String(value)), template);
 }
 
-export function compactTime(value: string): string {
+export function compactDate(value: string, locale?: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+  return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(date);
+}
+
+export function compactTime(value: string, locale?: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" }).format(date);
 }
 
 export function sentenceList(items: string[], empty = "Nothing here yet."): string {

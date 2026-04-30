@@ -1,9 +1,10 @@
-import { ArrowRight, BookOpenCheck, GraduationCap, Search } from "lucide-react";
+import { ArrowRight, GraduationCap, Search } from "lucide-react";
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
+
 import { AudioPlayer, Button, EmptyState, ErrorState, FilterChip, HeroCard, LoadingCard, SectionHeading, StatusChip, Surface } from "../components/ui";
-import { t, topicLabel } from "../lib/format";
-import type { AppRoute } from "../lib/routes";
+import { useI18n } from "../lib/i18n";
 import { api } from "../lib/api";
+import type { AppRoute } from "../lib/routes";
 import type { AuthUser, GrammarPoint, ReviewItem } from "../types";
 
 export function GrammarScreen({
@@ -19,6 +20,7 @@ export function GrammarScreen({
   q?: string;
   onNavigate: (route: AppRoute) => void;
 }) {
+  const { content, explanationLanguage, topicLabel, ui } = useI18n();
   const [items, setItems] = useState<GrammarPoint[]>([]);
   const [detail, setDetail] = useState<GrammarPoint | null>(null);
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
@@ -38,8 +40,8 @@ export function GrammarScreen({
         setItems(grammarItems);
         setReviewItems(reviewQueue.filter((item) => item.item_type === "grammar"));
       })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Could not load grammar.");
+      .catch(() => {
+        if (!cancelled) setError(ui("grammar.load_error", "Could not load grammar."));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -74,7 +76,7 @@ export function GrammarScreen({
   }, [activeTopic, deferredSearch, items]);
 
   if (loading) {
-    return <LoadingCard label="Loading grammar" />;
+    return <LoadingCard label={ui("route.grammar", "Grammar")} />;
   }
 
   if (error) {
@@ -83,55 +85,55 @@ export function GrammarScreen({
 
   return (
     <div className="space-y-4">
-      <HeroCard eyebrow="Grammar" title="Localized explanations and common transfer mistakes" description="Use the grammar view when you want explicit structure, linked scenarios, and a quick route back into practice." />
+      <HeroCard eyebrow={ui("route.grammar", "Grammar")} title={ui("grammar.hero_title", "Localized explanations and common transfer mistakes")} description={ui("grammar.hero_description", "Use the grammar view when you want explicit structure, linked scenarios, and a quick route back into practice.")} />
 
       {detail ? (
         <Surface>
           <SectionHeading
             eyebrow={topicLabel(detail.category)}
-            title={`${detail.korean_pattern} • ${t(detail.title, user.interface_language)}`}
-            description={t(detail.explanation, user.interface_language)}
+            title={`${detail.korean_pattern} · ${content(detail.title)}`}
+            description={content(detail.explanation)}
             action={reviewMap.get(detail.id) ? <StatusChip tone={reviewMap.get(detail.id)?.mistake_count ? "danger" : "accent"}>{reviewMap.get(detail.id)?.mastery_status}</StatusChip> : null}
           />
-          {detail.usage_notes[user.interface_language] ? <p className="mt-4 text-sm leading-7 text-[color:var(--app-muted)]">{detail.usage_notes[user.interface_language]}</p> : null}
+          {detail.usage_notes[explanationLanguage] ? <p className="mt-4 text-sm leading-7 text-[color:var(--app-muted)]">{content(detail.usage_notes)}</p> : null}
 
-          {detail.common_errors[user.interface_language]?.length ? (
+          {detail.common_errors[explanationLanguage]?.length ? (
             <div className="mt-5 rounded-[22px] border border-[color:var(--app-secondary)]/20 bg-[color:var(--app-secondary)]/6 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--app-secondary)]">Common mistakes</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--app-secondary)]">{ui("grammar.common_mistakes", "Common mistakes")}</p>
               <div className="mt-3 space-y-2">
-                {detail.common_errors[user.interface_language].slice(0, 3).map((item) => (
+                {detail.common_errors[explanationLanguage].slice(0, 3).map((item) => (
                   <p key={item} className="text-sm leading-6 text-[color:var(--app-text)]">{item}</p>
                 ))}
               </div>
             </div>
           ) : null}
 
-          {detail.transfer_notes[user.interface_language]?.length ? (
+          {detail.transfer_notes[explanationLanguage]?.length ? (
             <div className="mt-5">
-              <SectionHeading eyebrow="Transfer notes" title="Bridge from your learner language" />
+              <SectionHeading eyebrow={ui("grammar.transfer_notes", "Bridge from your learner language")} title={ui("grammar.transfer_notes", "Bridge from your learner language")} />
               <div className="mt-3 flex flex-wrap gap-2">
-                {detail.transfer_notes[user.interface_language].slice(0, 5).map((item) => <StatusChip key={item} tone="neutral">{item}</StatusChip>)}
+                {detail.transfer_notes[explanationLanguage].slice(0, 5).map((item) => <StatusChip key={item} tone="neutral">{item}</StatusChip>)}
               </div>
             </div>
           ) : null}
 
           {detail.example_sentences?.length ? (
             <div className="mt-5">
-              <SectionHeading eyebrow="Examples" title="Hear and compare the pattern in use" />
+              <SectionHeading eyebrow={ui("grammar.examples", "Examples")} title={ui("grammar.examples_title", "Hear and compare the pattern in use")} />
               <div className="mt-3 grid gap-3">
                 {detail.example_sentences.slice(0, 4).map((sentence) => (
                   <div key={sentence.id} className="rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] p-4">
                     <p className="text-base font-semibold">{sentence.korean}</p>
-                    <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{t(sentence.translations, user.interface_language)}</p>
-                    {sentence.explanation?.[user.interface_language] ? <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{t(sentence.explanation, user.interface_language)}</p> : null}
+                    <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{content(sentence.translations)}</p>
+                    {sentence.explanation?.[explanationLanguage] ? <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{content(sentence.explanation)}</p> : null}
                     {sentence.audio_items.length ? (
                       <div className="mt-3 space-y-3">
                         {sentence.audio_items.map((item) => (
-                          <AudioPlayer key={item.id} item={item} label="Example audio" language={user.interface_language} />
+                          <AudioPlayer key={item.id} item={item} label={ui("grammar.examples", "Examples")} language={explanationLanguage} />
                         ))}
                       </div>
                     ) : null}
-                    {sentence.audio_locked ? <p className="mt-3 text-sm text-[color:var(--app-secondary)]">Premium example audio is locked.</p> : null}
+                    {sentence.audio_locked ? <p className="mt-3 text-sm text-[color:var(--app-secondary)]">{ui("lesson.premium", "Premium")} audio</p> : null}
                   </div>
                 ))}
               </div>
@@ -143,8 +145,8 @@ export function GrammarScreen({
               {detail.related_lessons?.slice(0, 2).map((lesson) => (
                 <button key={`lesson-${lesson.id}`} type="button" onClick={() => onNavigate({ screen: "lesson", lessonId: lesson.id })} className="flex items-center justify-between rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4 py-3 text-left">
                   <div>
-                    <p className="font-semibold">{t(lesson.title, user.interface_language)}</p>
-                    <p className="text-sm text-[color:var(--app-muted)]">{t(lesson.summary, user.interface_language)}</p>
+                    <p className="font-semibold">{content(lesson.title)}</p>
+                    <p className="text-sm text-[color:var(--app-muted)]">{content(lesson.summary)}</p>
                   </div>
                   <ArrowRight size={16} className="text-[color:var(--app-accent)]" />
                 </button>
@@ -152,8 +154,8 @@ export function GrammarScreen({
               {detail.related_scenarios?.slice(0, 2).map((scenario) => (
                 <button key={`scenario-${scenario.id}`} type="button" onClick={() => onNavigate({ screen: "scenarios", scenario: scenario.slug })} className="flex items-center justify-between rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4 py-3 text-left">
                   <div>
-                    <p className="font-semibold">{t(scenario.title, user.interface_language)}</p>
-                    <p className="text-sm text-[color:var(--app-muted)]">{t(scenario.description, user.interface_language)}</p>
+                    <p className="font-semibold">{content(scenario.title)}</p>
+                    <p className="text-sm text-[color:var(--app-muted)]">{content(scenario.description)}</p>
                   </div>
                   <ArrowRight size={16} className="text-[color:var(--app-accent)]" />
                 </button>
@@ -162,33 +164,33 @@ export function GrammarScreen({
           ) : null}
 
           <div className="mt-5 flex flex-wrap gap-2">
-            <Button onClick={() => onNavigate({ screen: "review", mode: "grammar", size: 5 })}>Quick grammar review</Button>
-            <Button variant="secondary" onClick={() => onNavigate({ screen: "review", mode: "mixed", size: 5 })}>Mixed practice</Button>
+            <Button onClick={() => onNavigate({ screen: "review", mode: "grammar", size: 5 })}>{ui("grammar.quick_review", "Quick grammar review")}</Button>
+            <Button variant="secondary" onClick={() => onNavigate({ screen: "review", mode: "mixed", size: 5 })}>{ui("grammar.mixed_practice", "Mixed practice")}</Button>
           </div>
         </Surface>
       ) : null}
 
       <Surface>
-        <SectionHeading eyebrow="Filters" title="Category and pattern search" />
+        <SectionHeading eyebrow={ui("grammar.filters", "Filters")} title={ui("grammar.search_title", "Category and pattern search")} />
         <div className="mt-4 flex items-center gap-2 rounded-[20px] border border-[color:var(--app-line)] bg-[color:var(--app-elevated)] px-4">
           <Search size={16} className="text-[color:var(--app-muted)]" />
           <input
             value={search}
             onChange={(event) => startTransition(() => setSearch(event.target.value))}
-            placeholder="Search pattern or explanation"
+            placeholder={ui("grammar.search_placeholder", "Search pattern or explanation")}
             className="h-12 w-full bg-transparent text-sm outline-none"
           />
         </div>
         <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
           {topics.map((item) => (
             <FilterChip key={item} active={item === activeTopic} onClick={() => setActiveTopic(item)}>
-              {item === "all" ? "All" : topicLabel(item)}
+              {item === "all" ? ui("topic.all", "All") : topicLabel(item)}
             </FilterChip>
           ))}
         </div>
       </Surface>
 
-      {filtered.length === 0 ? <EmptyState title="No matching grammar points" description="Try another category or a broader search." /> : null}
+      {filtered.length === 0 ? <EmptyState title={ui("grammar.empty_title", "No matching grammar points")} description={ui("grammar.empty_description", "Try another category or a broader search.")} /> : null}
 
       <div className="grid gap-3">
         {filtered.map((item) => {
@@ -200,8 +202,8 @@ export function GrammarScreen({
                   <GraduationCap size={20} />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="text-base font-semibold">{item.korean_pattern} • {t(item.title, user.interface_language)}</h2>
-                  <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{t(item.explanation, user.interface_language)}</p>
+                  <h2 className="text-base font-semibold">{item.korean_pattern} · {content(item.title)}</h2>
+                  <p className="mt-2 text-sm leading-6 text-[color:var(--app-muted)]">{content(item.explanation)}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <StatusChip tone="neutral">{topicLabel(item.category)}</StatusChip>
                     <StatusChip tone="neutral">{item.difficulty}</StatusChip>
