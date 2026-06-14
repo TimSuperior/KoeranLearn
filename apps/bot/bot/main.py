@@ -1,9 +1,11 @@
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 from aiogram import Bot, Dispatcher, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -13,22 +15,20 @@ from aiogram.types import (
     BotCommandScopeAllPrivateChats,
     CallbackQuery,
     ErrorEvent,
-    InlineKeyboardButton,
     InlineKeyboardMarkup,
-    MenuButtonWebApp,
     Message,
-    WebAppInfo,
 )
 
 from bot.api import ApiClient
 from bot.keyboards import (
-    admin_mini_app_keyboard,
     content_actions_keyboard,
     lesson_exercise_keyboard,
+    lesson_result_keyboard,
     lesson_time_keyboard,
     main_reply_keyboard,
     onboarding_language_keyboard,
     options_keyboard,
+    result_action_keyboard,
     review_keyboard,
     scenario_topics_keyboard,
     settings_difficulty_keyboard,
@@ -36,8 +36,6 @@ from bot.keyboards import (
     settings_language_keyboard,
     settings_style_keyboard,
     settings_time_keyboard,
-    share_link_keyboard,
-    webapp_url,
 )
 from bot.texts import (
     action_from_label,
@@ -174,13 +172,9 @@ async def user_language(telegram_id: int | str) -> str:
 
 
 async def ensure_menu_button(bot: Bot, chat_id: int, language: str) -> None:
-    try:
-        await bot.set_chat_menu_button(
-            chat_id=chat_id,
-            menu_button=MenuButtonWebApp(text=button("app", language), web_app=WebAppInfo(url=webapp_url("home"))),
-        )
-    except Exception:
-        LOGGER.debug("Failed to set chat menu button", exc_info=True)
+    del bot
+    del chat_id
+    del language
 
 
 async def pause_text_input(state: FSMContext) -> None:
@@ -235,6 +229,67 @@ async def clear_quiz_session(state: FSMContext) -> None:
     await drop_data_keys(state, "quiz_session")
 
 
+async def practice_message_ref(state: FSMContext) -> dict[str, Any] | None:
+    return (await read_data(state)).get("practice_message")
+
+
+async def remember_practice_message_ref(state: FSMContext, chat_id: int, message_id: int, text: str | None = None) -> None:
+    payload: dict[str, Any] = {"chat_id": chat_id, "message_id": message_id}
+    if text is not None:
+        payload["text"] = text
+    await write_data(state, practice_message=payload)
+
+
+async def remember_practice_message(state: FSMContext, message: Message) -> None:
+    await remember_practice_message_ref(state, int(message.chat.id), int(message.message_id), message.text or "")
+
+
+async def render_practice_message(
+    target: Message,
+    state: FSMContext,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    panel = await practice_message_ref(state)
+    if not panel and target.from_user and target.from_user.is_bot:
+        panel = {"chat_id": int(target.chat.id), "message_id": int(target.message_id), "text": target.text or ""}
+    if panel and int(panel.get("chat_id", 0)) == int(target.chat.id):
+        message_id = int(panel.get("message_id", 0))
+        if message_id:
+            if panel.get("text") == text:
+                try:
+                    await target.bot.edit_message_reply_markup(
+                        chat_id=int(target.chat.id),
+                        message_id=message_id,
+                        reply_markup=reply_markup,
+                    )
+                    await remember_practice_message_ref(state, int(target.chat.id), message_id, text=text)
+                    return
+                except TelegramBadRequest as exc:
+                    if "message is not modified" in str(exc).lower():
+                        return
+                    LOGGER.debug("Failed to edit practice message markup", exc_info=True)
+                except Exception:
+                    LOGGER.debug("Failed to edit practice message markup", exc_info=True)
+            try:
+                await target.bot.edit_message_text(
+                    chat_id=int(target.chat.id),
+                    message_id=message_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                )
+                await remember_practice_message_ref(state, int(target.chat.id), message_id, text=text)
+                return
+            except TelegramBadRequest as exc:
+                if "message is not modified" in str(exc).lower():
+                    return
+                LOGGER.debug("Failed to edit practice message", exc_info=True)
+            except Exception:
+                LOGGER.debug("Failed to edit practice message", exc_info=True)
+    sent = await target.answer(text, reply_markup=reply_markup)
+    await remember_practice_message(state, sent)
+
+
 async def send_error_message(target: Message, language: str, action: str, route: str = "home") -> None:
     await target.answer(
         tr("generic_error", language),
@@ -247,14 +302,10 @@ async def send_error_message(target: Message, language: str, action: str, route:
 
 
 def no_content_keyboard(language: str, *, route: str = "home") -> InlineKeyboardMarkup:
+    web_route = "vocab" if route in {"home", "library"} else route
     return content_actions_keyboard(
-        [
-            (button("lesson", language), "nav:lesson"),
-            (button("review", language), "nav:review"),
-            (button("dialogue", language), "nav:dialogue"),
-            (button("library", language), "nav:library"),
-        ],
-        web_route=route,
+        [(button("words", language), "nav:words")],
+        web_route=web_route,
         web_label=button("open_app", language),
     )
 
@@ -309,30 +360,49 @@ def submenu_text(settings: dict, language: str, mode: str) -> str:
     return f"{base}\n\n{prompt_map.get(mode, button('settings', language))}"
 
 
+def next_streak_milestone(streak_count: int) -> int:
+    return next((value for value in (3, 7, 14, 30, 60, 100) if value > streak_count), streak_count + 50)
+
+
+def due_target_text(progress: dict, language: str) -> str:
+    if int(progress.get("due_reviews") or 0) > 0:
+        return tr("interval_days", language, days=0)
+
+    schedule = ((progress.get("review_overview") or {}).get("schedule") or {})
+    next_review_at = schedule.get("next_review_at")
+    if not next_review_at:
+        return "-"
+
+    try:
+        target = datetime.fromisoformat(str(next_review_at).replace("Z", "+00:00"))
+    except ValueError:
+        return "-"
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+
+    days = max((target.astimezone(timezone.utc).date() - datetime.now(timezone.utc).date()).days, 0)
+    return tr("interval_days", language, days=days)
+
+
 def progress_message(progress: dict, language: str) -> str:
     path = progress.get("current_path") or {}
+    module = progress.get("current_module") or {}
     lesson = progress.get("current_lesson") or {}
-    path_title = localize(path.get("title"), language, "Korean from zero")
+    path_title = localize(path.get("title"), language, tr("curriculum_default_title", language))
+    module_title = localize(module.get("title"), language, "-")
     lesson_title = localize(lesson.get("title"), language, tr("no_lesson", language))
+    streak_count = int(progress.get("streak_count") or 0)
+    lesson_title = f"{lesson_title}\n{tr('label_due_target', language)}: {due_target_text(progress, language)}"
+    progress["streak_count"] = f"{streak_count}\n{tr('label_next_milestone', language)}: {next_streak_milestone(streak_count)}"
     return (
         f"{tr('progress_title', language)}\n\n"
         f"{path_title}\n"
+        f"{tr('label_module', language)}: {module_title}\n"
         f"{path.get('completed_lessons', 0)}/{path.get('total_lessons', 0)} • {round(path.get('percent_complete', 0))}%\n\n"
         f"{tr('label_next', language)}: {lesson_title}\n"
         f"{tr('label_due', language)}: {progress.get('due_reviews', 0)} • {button('mistakes', language)}: {progress.get('mistake_reviews', 0)}\n"
         f"XP: {progress.get('xp', 0)} • {button('streak', language)}: {progress.get('streak_count', 0)}"
     )
-
-
-def streak_message(summary: dict, language: str) -> str:
-    return (
-        f"{tr('streak_title', language)}\n\n"
-        f"{tr('label_current', language)}: {summary.get('streak_count', 0)}\n"
-        f"{tr('label_next_milestone', language)}: {summary.get('next_milestone', 0)}\n"
-        f"XP: {summary.get('xp', 0)}\n"
-        f"{tr('label_due', language)}: {summary.get('due_reviews', 0)}"
-    )
-
 
 def curriculum_message(plan: dict, language: str) -> str:
     path = plan.get("path") or {}
@@ -340,7 +410,7 @@ def curriculum_message(plan: dict, language: str) -> str:
     lesson = plan.get("next_lesson") or {}
     return (
         f"{tr('curriculum_title', language)}\n\n"
-        f"{localize(path.get('title'), language, 'Korean from zero')}\n"
+        f"{localize(path.get('title'), language, tr('curriculum_default_title', language))}\n"
         f"{tr('label_module', language)}: {localize(module.get('title'), language, tr('label_module', language))}\n"
         f"{tr('label_next', language)}: {localize(lesson.get('title'), language, tr('no_lesson', language))}\n"
         f"{plan.get('completed_lessons', 0)}/{plan.get('total_lessons', 0)} • {round(plan.get('percent_complete', 0))}%"
@@ -370,7 +440,7 @@ def menu_message(language: str, progress: dict | None, lesson_ready: bool, quiz_
 
 
 def lesson_intro_message(lesson: dict, language: str) -> str:
-    title = localize(lesson.get("title"), language, "Lesson")
+    title = localize(lesson.get("title"), language, tr("lesson_heading", language))
     summary = localize(lesson.get("summary"), language) or localize(lesson.get("explanation"), language)
     korean_text = shorten(lesson.get("korean_text"), 180)
     lines = [tr("lesson_heading", language), title, lesson_meta_line(lesson, language)]
@@ -382,13 +452,125 @@ def lesson_intro_message(lesson: dict, language: str) -> str:
 
 
 def exercise_message(lesson: dict, exercise: dict, language: str, index: int, total: int) -> str:
-    title = localize(lesson.get("title"), language, "Lesson")
+    title = localize(lesson.get("title"), language, tr("lesson_heading", language))
     prompt = localize(exercise.get("prompt"), language, tr("missing_content", language))
     instructions = localize(exercise.get("instructions"), language)
     header = f"{title} • {progress_indicator(index + 1, total)}"
     if instructions:
         return f"{header}\n\n{prompt}\n\n{shorten(instructions, 180)}"
     return f"{header}\n\n{prompt}"
+
+
+def practice_card_text(header: str, prompt: str, *, notice: str | None = None, footer: str | None = None) -> str:
+    lines: list[str] = []
+    if notice:
+        lines.extend([notice, ""])
+    lines.append(header)
+    lines.extend(["", prompt])
+    if footer:
+        lines.extend(["", footer])
+    return "\n".join(lines)
+
+
+def lesson_step_text(
+    lesson: dict,
+    exercise: dict,
+    language: str,
+    index: int,
+    total: int,
+    *,
+    notice: str | None = None,
+    text_prompt: bool = False,
+) -> str:
+    title = localize(lesson.get("title"), language, tr("lesson_heading", language))
+    prompt = localize(exercise.get("prompt"), language, tr("missing_content", language))
+    instructions = localize(exercise.get("instructions"), language)
+    footer_parts: list[str] = []
+    if instructions:
+        footer_parts.append(shorten(instructions, 120))
+    if text_prompt:
+        footer_parts.append(tr("lesson_prompt_text", language))
+    footer = "\n".join(footer_parts) if footer_parts else None
+    return practice_card_text(
+        f"{title} - {progress_indicator(index + 1, total)}",
+        prompt,
+        notice=notice,
+        footer=footer,
+    )
+
+
+def review_step_text(item: dict, language: str, queue_kind: str, total: int, notice: str | None = None) -> str:
+    title = button("quick_review", language) if queue_kind == "due" else button("mistakes", language)
+    prompt = extract_review_prompt(item, language)
+    footer = None
+    if queue_kind == "mistakes" and int(item.get("mistake_count") or 0) > 0:
+        footer = f"{button('mistakes', language)}: {int(item.get('mistake_count') or 0)}"
+    return practice_card_text(
+        f"{title} {progress_indicator(1, total)}",
+        prompt,
+        notice=notice,
+        footer=footer,
+    )
+
+
+def quiz_step_text(item: dict, language: str, index: int, total: int, notice: str | None = None) -> str:
+    return practice_card_text(
+        f"{tr('quiz_title', language)} - {progress_indicator(index + 1, total)}",
+        item.get("prompt") or tr("missing_content", language),
+        notice=notice,
+    )
+
+
+def explanation_line(value: Any, language: str, limit: int = 110) -> str | None:
+    text = shorten(localize(value, language), limit)
+    return text or None
+
+
+def lesson_question_line(exercise: dict, language: str) -> str:
+    return localize(exercise.get("prompt"), language, tr("missing_content", language))
+
+
+def lesson_result_text(
+    lesson: dict,
+    exercise: dict,
+    language: str,
+    index: int,
+    total: int,
+    result_line: str,
+    *,
+    explanation: str | None = None,
+) -> str:
+    title = localize(lesson.get("title"), language, tr("lesson_heading", language))
+    question = lesson_question_line(exercise, language)
+    lines = [
+        f"{title} - {progress_indicator(index + 1, total)}",
+        "",
+        question,
+        "",
+        result_line,
+    ]
+    if explanation:
+        lines.extend(["", explanation])
+    return "\n".join(lines)
+
+
+def review_result_text(language: str, queue_kind: str, note: str) -> str:
+    title = button("quick_review", language) if queue_kind == "due" else button("mistakes", language)
+    return practice_card_text(title, note)
+
+
+def quiz_result_text(
+    item: dict,
+    language: str,
+    index: int,
+    total: int,
+    result_line: str,
+    *,
+    explanation: str | None = None,
+    note: str | None = None,
+) -> str:
+    footer = "\n".join(line for line in [explanation, note] if line) or None
+    return practice_card_text(f"{tr('quiz_title', language)} - {progress_indicator(index + 1, total)}", result_line, footer=footer)
 
 
 def grammar_preview_message(items: list[dict], language: str, focus: dict | None = None) -> str:
@@ -445,15 +627,21 @@ def words_preview_message(items: list[dict], language: str, focus: dict | None =
     return "\n".join(lines)
 
 
-def dialogue_preview_message(language: str, scenarios: list[dict], focus: dict | None = None) -> str:
+def dialogue_preview_message(
+    language: str,
+    scenarios: list[dict],
+    focus: dict | None = None,
+    *,
+    topic: str | None = None,
+) -> str:
     if focus:
-        title = localize(focus.get("title"), language, "Scenario")
+        title = localize(focus.get("title"), language, button("dialogue", language))
         description = shorten(localize(focus.get("description"), language), 220)
         lines = [tr("dialogue_title", language), "", title]
         if description:
             lines.extend(["", description])
         if focus.get("audio_locked"):
-            lines.extend(["", "Premium listening is locked in chat. Open the Mini App for the full playback flow."])
+            lines.extend(["", tr("dialogue_locked_chat", language)])
             return "\n".join(lines)
         first_dialogue = (focus.get("dialogues") or [{}])[0]
         preview_lines = first_dialogue.get("lines") or []
@@ -463,14 +651,44 @@ def dialogue_preview_message(language: str, scenarios: list[dict], focus: dict |
                 lines.append(f"{line.get('speaker', 'A')}: {line.get('korean', '')}")
         return "\n".join(lines)
 
-    lines = [tr("dialogue_title", language), ""]
-    for index, item in enumerate(scenarios[:4], start=1):
-        title = localize(item.get("title"), language, "Scenario")
-        description = shorten(localize(item.get("description"), language), 90)
-        lines.append(f"{index}. {title}")
-        if description:
-            lines.append(f"   {description}")
+    heading = f"{tr('dialogue_title', language)}: {topic_label(topic, language)}" if topic else tr("dialogue_title", language)
+    lines = [heading]
+    if not topic:
+        lines.extend([dialogue_intro_line(language), ""])
+    else:
+        lines.append("")
+    visible_topics = {str(item.get("topic")) for item in scenarios[:3] if item.get("topic")}
+    show_topic = not topic and len(visible_topics) > 1
+    for item in scenarios[:3]:
+        lines.append(dialogue_scenario_line(item, language, show_topic=show_topic))
     return "\n".join(lines)
+
+
+def dialogue_intro_line(language: str) -> str:
+    return tr("dialogue_intro", language)
+    labels = {
+        "ru": "Выберите тему или откройте подборку в Bot.",
+        "uz": "Mavzuni tanlang yoki Botda to'liq ro'yxatni oching.",
+        "en": "Pick a topic or open the full list in the Bot.",
+    }
+    return labels.get(normalize_language(language), labels["en"])
+
+
+def dialogue_open_label(language: str) -> str:
+    return button("open_app", language)
+    labels = {
+        "ru": "Открыть в Bot",
+        "uz": "Bot'da ochish",
+        "en": "Open in Bot",
+    }
+    return labels.get(normalize_language(language), labels["en"])
+
+
+def dialogue_scenario_line(item: dict, language: str, *, show_topic: bool = False) -> str:
+    title = shorten(localize(item.get("title"), language, button("dialogue", language)), 72)
+    if show_topic and item.get("topic"):
+        return f"• {title} · {topic_label(str(item.get('topic')), language)}"
+    return f"• {title}"
 
 
 def quiz_item_message(item: dict, language: str, index: int, total: int) -> str:
@@ -490,66 +708,31 @@ def quiz_item_message(item: dict, language: str, index: int, total: int) -> str:
 
 
 def grammar_keyboard(language: str, items: list[dict], focus: dict | None = None) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
-    entries = [focus] if focus else items[:3]
-    for item in entries:
-        if not item:
-            continue
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{item.get('korean_pattern', '')}",
-                    web_app=WebAppInfo(url=webapp_url("library", tab="grammar", grammar=str(item.get("id")))),
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton(text=button("open_library", language), web_app=WebAppInfo(url=webapp_url("library", tab="grammar")))])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    del items
+    callbacks = [(button("words", language), "nav:words")]
+    if focus:
+        callbacks.insert(0, (button("back", language), "nav:menu"))
+    return content_actions_keyboard(callbacks)
 
 
 def words_keyboard(language: str, items: list[dict], focus: dict | None = None) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
-    entries = [focus] if focus else items[:3]
-    for item in entries:
-        if not item:
-            continue
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=item.get("korean", ""),
-                    web_app=WebAppInfo(url=webapp_url("library", tab="words", word=str(item.get("id")))),
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton(text=button("open_library", language), web_app=WebAppInfo(url=webapp_url("library", tab="words")))])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def dialogue_keyboard(language: str, scenarios: list[dict], focus: dict | None = None) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
+    del items
     if focus:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=button("open_dialogue", language),
-                    web_app=WebAppInfo(url=webapp_url("scenarios", scenario=str(focus.get("slug")))),
-                )
-            ]
-        )
-    else:
-        primary = next((item for item in scenarios if (item.get("progress") or {}).get("status") == "in_progress"), None) or (scenarios[0] if scenarios else None)
-        if primary:
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=localize(primary.get("title"), language, button("open_dialogue", language)),
-                        web_app=WebAppInfo(url=webapp_url("scenarios", scenario=str(primary.get("slug")))),
-                    )
-                ]
-            )
-    rows.extend(scenario_topics_keyboard(language).inline_keyboard)
-    rows.append([InlineKeyboardButton(text=button("open_dialogue", language), web_app=WebAppInfo(url=webapp_url("scenarios")))])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+        return content_actions_keyboard([(button("menu", language), "nav:menu")])
+    return content_actions_keyboard([(button("menu", language), "nav:menu")])
+
+
+def dialogue_keyboard(
+    language: str,
+    scenarios: list[dict],
+    focus: dict | None = None,
+    *,
+    topic: str | None = None,
+) -> InlineKeyboardMarkup:
+    del scenarios
+    del focus
+    del topic
+    return content_actions_keyboard([(button("menu", language), "nav:menu"), (button("words", language), "nav:words")])
 
 
 def quiz_exercise_keyboard(item: dict, language: str) -> InlineKeyboardMarkup:
@@ -607,34 +790,69 @@ async def send_menu(message: Message, state: FSMContext) -> None:
     language = await user_language(telegram_id)
     await pause_text_input(state)
     await ensure_menu_button(message.bot, telegram_id, language)
-    progress = None
-    try:
-        progress = await api.progress(telegram_id)
-    except Exception:
-        LOGGER.debug("Could not load menu progress", exc_info=True)
-    text = menu_message(language, progress, bool(await lesson_resume(state)), bool(await quiz_session(state)))
+    text = "\n".join([tr("words_title", language), "", tr("menu_subtitle", language), "", tr("menu_hint", language)])
     await message.answer(text, reply_markup=main_reply_keyboard(language))
 
 
-async def send_review_queue(target: Message, telegram_id: int, queue_kind: str, language: str) -> None:
+async def send_review_queue(
+    target: Message,
+    state: FSMContext,
+    telegram_id: int,
+    queue_kind: str,
+    language: str,
+    *,
+    notice: str | None = None,
+    empty_key: str | None = None,
+) -> None:
     queue = await api.review_queue(telegram_id, mistakes_only=queue_kind == "mistakes")
     if not queue:
-        empty_key = "no_mistakes" if queue_kind == "mistakes" else "no_review"
+        empty_key = empty_key or ("no_mistakes" if queue_kind == "mistakes" else "no_review")
         route = "review" if queue_kind == "mistakes" else "learn"
-        await target.answer(tr(empty_key, language), reply_markup=no_content_keyboard(language, route=route))
+        await render_practice_message(target, state, tr(empty_key, language), reply_markup=no_content_keyboard(language, route=route))
         return
-    await target.answer(review_message(queue[0], language, queue_kind, len(queue)), reply_markup=review_keyboard(queue[0]["id"], queue_kind, language))
+    await render_practice_message(
+        target,
+        state,
+        review_step_text(queue[0], language, queue_kind, len(queue), notice=notice),
+        reply_markup=review_keyboard(queue[0]["id"], queue_kind, language),
+    )
 
 
-async def send_current_lesson_step(target: Message, lesson: dict, index: int, state: FSMContext, telegram_id: int, language: str) -> None:
+async def show_review_result(
+    target: Message,
+    state: FSMContext,
+    queue_kind: str,
+    language: str,
+    note: str,
+) -> None:
+    await render_practice_message(
+        target,
+        state,
+        review_result_text(language, queue_kind, note),
+        reply_markup=result_action_keyboard(f"review:result:{queue_kind}", language),
+    )
+
+
+async def send_current_lesson_step(
+    target: Message,
+    lesson: dict,
+    index: int,
+    state: FSMContext,
+    telegram_id: int,
+    language: str,
+    *,
+    notice: str | None = None,
+) -> None:
     exercises = sorted_exercises(lesson)
     if not exercises:
         await clear_lesson_resume(state)
-        await target.answer(tr("lesson_finished_empty", language), reply_markup=no_content_keyboard(language, route="learn"))
+        await render_practice_message(target, state, tr("lesson_finished_empty", language), reply_markup=no_content_keyboard(language, route="learn"))
         return
     if index >= len(exercises):
         await clear_lesson_resume(state)
-        await target.answer(
+        await render_practice_message(
+            target,
+            state,
             tr("lesson_complete", language),
             reply_markup=content_actions_keyboard(
                 [(button("review", language), "nav:review"), (button("dialogue", language), "nav:dialogue")],
@@ -649,30 +867,84 @@ async def send_current_lesson_step(target: Message, lesson: dict, index: int, st
     keyboard = lesson_exercise_keyboard(exercise, language, "lesson")
     if keyboard:
         await state.set_state(None)
-        await target.answer(exercise_message(lesson, exercise, language, index, len(exercises)), reply_markup=keyboard)
+        await render_practice_message(
+            target,
+            state,
+            lesson_step_text(lesson, exercise, language, index, len(exercises), notice=notice),
+            reply_markup=keyboard,
+        )
         return
 
     await state.set_state(LessonFlow.answering_text)
-    await target.answer(
-        f"{exercise_message(lesson, exercise, language, index, len(exercises))}\n\n{tr('lesson_prompt_text', language)}"
+    await render_practice_message(
+        target,
+        state,
+        lesson_step_text(
+            lesson,
+            exercise,
+            language,
+            index,
+            len(exercises),
+            notice=notice,
+            text_prompt=True,
+        ),
     )
 
 
-async def start_lesson_flow(target: Message, state: FSMContext, telegram_id: int, *, lesson_id: int | None = None) -> None:
+async def show_lesson_result(
+    target: Message,
+    state: FSMContext,
+    lesson: dict,
+    index: int,
+    next_index: int,
+    language: str,
+    result: dict[str, Any],
+) -> None:
+    exercises = sorted_exercises(lesson)
+    exercise = exercises[index]
+    await state.set_state(None)
+    if next_index < len(exercises):
+        await remember_lesson_resume(state, lesson["id"], next_index)
+    else:
+        await clear_lesson_resume(state)
+    explanation = explanation_line(result.get("explanation"), language)
+    await render_practice_message(
+        target,
+        state,
+        lesson_result_text(
+            lesson,
+            exercise,
+            language,
+            index,
+            len(exercises),
+            tr("correct", language) if result.get("is_correct") else tr("incorrect_short", language),
+            explanation=explanation,
+        ),
+        reply_markup=lesson_result_keyboard(f"lesson:result:{lesson['id']}:{next_index}", language),
+    )
+
+
+async def start_lesson_flow(
+    target: Message,
+    state: FSMContext,
+    telegram_id: int,
+    *,
+    lesson_id: int | None = None,
+    notice: str | None = None,
+) -> None:
     language = await user_language(telegram_id)
     lesson = await (fetch_lesson(telegram_id, lesson_id) if lesson_id else api.continue_lesson(telegram_id))
     if not lesson:
-        await target.answer(tr("no_lesson", language), reply_markup=no_content_keyboard(language, route="learn"))
+        await render_practice_message(target, state, tr("no_lesson", language), reply_markup=no_content_keyboard(language, route="learn"))
         return
     await api.start_lesson(telegram_id, lesson["id"])
-    await target.answer(lesson_intro_message(lesson, language))
-    await send_current_lesson_step(target, lesson, 0, state, telegram_id, language)
+    await send_current_lesson_step(target, lesson, 0, state, telegram_id, language, notice=notice)
 
 
-async def resume_lesson_flow(target: Message, state: FSMContext, telegram_id: int) -> bool:
+async def resume_lesson_flow(target: Message, state: FSMContext, telegram_id: int) -> tuple[bool, str | None]:
     resume = await lesson_resume(state)
     if not resume:
-        return False
+        return False, None
     language = await user_language(telegram_id)
     try:
         lesson = await fetch_lesson(telegram_id, int(resume["lesson_id"]))
@@ -680,13 +952,11 @@ async def resume_lesson_flow(target: Message, state: FSMContext, telegram_id: in
         index = int(resume["exercise_index"])
         if index < 0 or index >= len(exercises):
             raise IndexError("Exercise index is out of range")
-        await target.answer(tr("lesson_resumed", language))
-        await send_current_lesson_step(target, lesson, index, state, telegram_id, language)
-        return True
+        await send_current_lesson_step(target, lesson, index, state, telegram_id, language, notice=tr("lesson_resumed", language))
+        return True, None
     except Exception:
         await clear_lesson_resume(state)
-        await target.answer(tr("lesson_no_resume", language))
-        return False
+        return False, tr("lesson_no_resume", language)
 
 
 async def build_quiz_session(telegram_id: int, language: str) -> dict[str, Any] | None:
@@ -772,17 +1042,51 @@ async def build_quiz_session(telegram_id: int, language: str) -> dict[str, Any] 
     return {"items": items[:QUIZ_SESSION_SIZE], "index": 0}
 
 
-async def send_quiz_item(target: Message, state: FSMContext, telegram_id: int, language: str) -> None:
+async def show_quiz_result(
+    target: Message,
+    state: FSMContext,
+    item: dict[str, Any],
+    index: int,
+    total: int,
+    language: str,
+    result_line: str,
+    *,
+    explanation: str | None = None,
+    note: str | None = None,
+    later: bool = False,
+) -> None:
+    session = await quiz_session(state)
+    if session:
+        session["index"] = index + 1
+        await remember_quiz_session(state, session)
+    await render_practice_message(
+        target,
+        state,
+        quiz_result_text(item, language, index, total, result_line, explanation=explanation, note=note),
+        reply_markup=result_action_keyboard("quiz:result", language, later=later),
+    )
+
+
+async def send_quiz_item(
+    target: Message,
+    state: FSMContext,
+    telegram_id: int,
+    language: str,
+    *,
+    notice: str | None = None,
+) -> None:
     session = await quiz_session(state)
     if not session:
-        await target.answer(tr("quiz_empty", language), reply_markup=no_content_keyboard(language, route="learn"))
+        await render_practice_message(target, state, tr("quiz_empty", language), reply_markup=no_content_keyboard(language, route="learn"))
         return
 
     index = int(session.get("index", 0))
     items = session.get("items") or []
     if index >= len(items):
         await clear_quiz_session(state)
-        await target.answer(
+        await render_practice_message(
+            target,
+            state,
             tr("quiz_complete", language),
             reply_markup=content_actions_keyboard(
                 [(button("lesson", language), "nav:lesson"), (button("review", language), "nav:review")],
@@ -793,39 +1097,34 @@ async def send_quiz_item(target: Message, state: FSMContext, telegram_id: int, l
         return
 
     item = items[index]
-    text = quiz_item_message(item, language, index, len(items))
+    text = quiz_step_text(item, language, index, len(items), notice=notice)
     if item["kind"] == "exercise":
-        await target.answer(text, reply_markup=quiz_exercise_keyboard(item, language))
+        await render_practice_message(target, state, text, reply_markup=quiz_exercise_keyboard(item, language))
         return
     if item["kind"] == "review":
-        await target.answer(
+        await render_practice_message(
+            target,
+            state,
             text,
-            reply_markup=content_actions_keyboard(
-                [(button("knew", language), "quiz:review:4"), (button("missed", language), "quiz:review:1")],
-                web_route="review",
-                web_label=button("open_review", language),
-            ),
+            reply_markup=content_actions_keyboard([(button("knew", language), "quiz:review:4"), (button("missed", language), "quiz:review:1")]),
         )
         return
-    await target.answer(
+    await render_practice_message(
+        target,
+        state,
         text,
-        reply_markup=content_actions_keyboard(
-            [(button("knew", language), "quiz:scenario:knew"), (button("show_answer", language), "quiz:scenario:show")],
-            web_route="scenarios",
-            web_label=button("open_dialogue", language),
-            web_params={"scenario": str(item.get("scenario_slug"))},
-        ),
+        reply_markup=content_actions_keyboard([(button("knew", language), "quiz:scenario:knew"), (button("show_answer", language), "quiz:scenario:show")]),
     )
 
 
-async def move_quiz_forward(target: Message, state: FSMContext, language: str) -> None:
+async def move_quiz_forward(target: Message, state: FSMContext, language: str, *, notice: str | None = None) -> None:
     session = await quiz_session(state)
     if not session:
-        await target.answer(tr("quiz_empty", language), reply_markup=no_content_keyboard(language, route="learn"))
+        await render_practice_message(target, state, tr("quiz_empty", language), reply_markup=no_content_keyboard(language, route="learn"))
         return
     session["index"] = int(session.get("index", 0)) + 1
     await remember_quiz_session(state, session)
-    await send_quiz_item(target, state, target.chat.id, language)
+    await send_quiz_item(target, state, target.chat.id, language, notice=notice)
 
 
 async def send_settings_overview(target: Message, telegram_id: int, language: str) -> None:
@@ -863,33 +1162,14 @@ async def update_settings_message(callback: CallbackQuery, settings: dict, mode:
 async def dispatch_navigation(target: Message, state: FSMContext, action: str) -> None:
     if action == "menu":
         await send_menu(target, state)
-    elif action == "lesson":
-        await cmd_lesson(target, state)
-    elif action == "grammar":
-        await cmd_grammar(target, state)
     elif action == "words":
         await cmd_words(target, state)
-    elif action == "review":
-        await cmd_review(target, state)
-    elif action == "mistakes":
-        await cmd_mistakes(target, state)
-    elif action == "dialogue":
-        await cmd_dialogue(target, state)
-    elif action == "library":
-        await cmd_library(target, state)
-    elif action == "quiz":
-        await cmd_quiz(target, state)
-    elif action == "progress":
-        await cmd_progress(target, state)
-    elif action == "streak":
-        await cmd_streak(target, state)
-    elif action == "settings":
-        await cmd_settings(target, state)
     elif action == "help":
         await cmd_help(target, state)
     elif action == "app":
-        language = await user_language(target.chat.id)
-        await target.answer(button("open_app", language), reply_markup=content_actions_keyboard(web_route="home", web_label=button("open_app", language)))
+        await cmd_words(target, state)
+    else:
+        await cmd_words(target, state)
 
 
 async def handle_deep_link(target: Message, state: FSMContext, payload: str | None, language: str) -> bool:
@@ -897,47 +1177,11 @@ async def handle_deep_link(target: Message, state: FSMContext, payload: str | No
     if not deep_link:
         return False
     action = deep_link["type"]
-    if action == "lesson" and deep_link.get("id", "").isdigit():
-        await clear_quiz_session(state)
-        await start_lesson_flow(target, state, target.chat.id, lesson_id=int(deep_link["id"]))
-        return True
-    if action == "scenario":
-        await send_dialogue_preview(target, target.chat.id, language, focus=deep_link.get("id"))
-        return True
-    if action == "grammar":
-        await send_grammar_preview(target, language, focus=deep_link.get("id"))
-        return True
     if action == "word":
         await send_words_preview(target, language, focus=deep_link.get("id"))
         return True
-    if action == "review":
-        await send_review_queue(target, target.chat.id, "due", language)
-        return True
-    if action == "mistakes":
-        await send_review_queue(target, target.chat.id, "mistakes", language)
-        return True
-    if action in {"review_grammar", "review_listening", "review_vocab"}:
-        mode = action.replace("review_", "")
-        await target.answer(
-            tr("menu_hint", language),
-            reply_markup=content_actions_keyboard(
-                web_route="review",
-                web_label=button("open_review", language),
-                web_params={"mode": mode},
-            ),
-        )
-        return True
-    if action == "settings":
-        await send_settings_overview(target, target.chat.id, language)
-        return True
-    if action == "quiz":
-        await cmd_quiz(target, state)
-        return True
-    if action == "dialogue":
-        await send_dialogue_preview(target, target.chat.id, language, topic=deep_link.get("topic"))
-        return True
-    if action == "library":
-        await send_library_overview(target, language)
+    if action in {"lesson", "scenario", "grammar", "review", "mistakes", "review_grammar", "review_listening", "review_vocab", "settings", "quiz", "dialogue", "library"}:
+        await send_words_preview(target, language)
         return True
     return False
 
@@ -954,7 +1198,7 @@ async def send_grammar_preview(target: Message, language: str, focus: str | None
 async def send_words_preview(target: Message, language: str, focus: str | None = None) -> None:
     items = await api.vocab(target.chat.id, language)
     if not items:
-        await target.answer(tr("words_empty", language), reply_markup=no_content_keyboard(language, route="library"))
+        await target.answer(tr("words_empty", language), reply_markup=no_content_keyboard(language, route="vocab"))
         return
     focused = find_item(items, focus)
     await target.answer(words_preview_message(items, language, focused), reply_markup=words_keyboard(language, items, focused))
@@ -990,13 +1234,19 @@ async def send_dialogue_preview(target: Message, telegram_id: int, language: str
         except Exception:
             detail = None
         if detail:
-            await target.answer(dialogue_preview_message(language, scenarios, detail), reply_markup=dialogue_keyboard(language, scenarios, detail))
+            await target.answer(
+                dialogue_preview_message(language, scenarios, detail),
+                reply_markup=dialogue_keyboard(language, scenarios, detail),
+            )
             return
         await target.answer(tr("unknown_deep_link", language))
     if not scenarios:
         await target.answer(tr("dialogue_empty", language), reply_markup=no_content_keyboard(language, route="scenarios"))
         return
-    await target.answer(dialogue_preview_message(language, scenarios), reply_markup=dialogue_keyboard(language, scenarios))
+    await target.answer(
+        dialogue_preview_message(language, scenarios, topic=topic),
+        reply_markup=dialogue_keyboard(language, scenarios, topic=topic),
+    )
 
 
 async def cmd_start(message: Message, state: FSMContext) -> None:
@@ -1080,17 +1330,18 @@ async def cmd_admin(message: Message) -> None:
     if not is_authorized_admin(telegram_id):
         await message.answer(tr("admin_only", language))
         return
-    await message.answer(button("admin", language), reply_markup=admin_mini_app_keyboard(language))
+    await message.answer("Admin web interface has been removed. Use the API directly.")
 
 
 async def cmd_lesson(message: Message, state: FSMContext) -> None:
     telegram_id = chat_user_id(message)
     await clear_quiz_session(state)
-    if await resume_lesson_flow(message, state, telegram_id):
+    resumed, notice = await resume_lesson_flow(message, state, telegram_id)
+    if resumed:
         return
     language = await user_language(telegram_id)
     try:
-        await start_lesson_flow(message, state, telegram_id)
+        await start_lesson_flow(message, state, telegram_id, notice=notice)
     except Exception:
         LOGGER.exception("Failed to start lesson")
         await send_error_message(message, language, "lesson", route="learn")
@@ -1103,44 +1354,53 @@ async def on_lesson_answer(callback: CallbackQuery, state: FSMContext) -> None:
         resume = await lesson_resume(state)
         if not resume:
             await callback.answer(tr("lesson_no_resume", language), show_alert=True)
-            await cmd_lesson(callback.message, state)
+            await start_lesson_flow(callback.message, state, callback.from_user.id, notice=tr("lesson_no_resume", language))
             return
         lesson = await fetch_lesson(callback.from_user.id, int(resume["lesson_id"]))
         exercises = sorted_exercises(lesson)
         exercise = exercises[int(resume["exercise_index"])]
         if int(exercise_id_raw) != int(exercise["id"]):
             await callback.answer(tr("lesson_no_resume", language), show_alert=True)
-            await cmd_lesson(callback.message, state)
+            await start_lesson_flow(callback.message, state, callback.from_user.id, notice=tr("lesson_no_resume", language))
             return
         option_index = int(option_index_raw)
         options = sorted(exercise.get("options") or [], key=lambda item: item.get("order_index", 0))
         option = options[option_index]
         result = await api.submit_exercise(callback.from_user.id, int(exercise["id"]), int(lesson["id"]), option.get("value"))
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer(tr("correct", language) if result.get("is_correct") else tr("wrong", language))
-        if result.get("is_correct"):
-            await send_current_lesson_step(
-                callback.message,
-                lesson,
-                int(resume["exercise_index"]) + 1,
-                state,
-                callback.from_user.id,
-                language,
-            )
-        else:
-            await send_current_lesson_step(
-                callback.message,
-                lesson,
-                int(resume["exercise_index"]),
-                state,
-                callback.from_user.id,
-                language,
-            )
+        next_index = int(resume["exercise_index"]) + 1
+        await show_lesson_result(
+            callback.message,
+            state,
+            lesson,
+            int(resume["exercise_index"]),
+            next_index,
+            language,
+            result,
+        )
         await callback.answer()
     except Exception:
         LOGGER.exception("Failed to submit lesson answer")
         await callback.answer(tr("generic_error", language), show_alert=True)
         await send_error_message(callback.message, language, "lesson", route="learn")
+
+
+async def on_lesson_result(callback: CallbackQuery, state: FSMContext) -> None:
+    language = await user_language(callback.from_user.id)
+    try:
+        _, _, lesson_id_raw, next_index_raw, _ = callback.data.split(":")
+        lesson = await fetch_lesson(callback.from_user.id, int(lesson_id_raw))
+        await send_current_lesson_step(
+            callback.message,
+            lesson,
+            int(next_index_raw),
+            state,
+            callback.from_user.id,
+            language,
+        )
+        await callback.answer()
+    except Exception:
+        LOGGER.exception("Failed to continue lesson after result")
+        await callback.answer(tr("generic_error", language), show_alert=True)
 
 
 async def on_text_answer(message: Message, state: FSMContext) -> None:
@@ -1160,11 +1420,19 @@ async def on_text_answer(message: Message, state: FSMContext) -> None:
     language = await user_language(telegram_id)
     try:
         lesson = await fetch_lesson(telegram_id, int(resume["lesson_id"]))
-        exercise = sorted_exercises(lesson)[int(resume["exercise_index"])]
+        current_index = int(resume["exercise_index"])
+        exercise = sorted_exercises(lesson)[current_index]
         result = await api.submit_exercise(telegram_id, int(exercise["id"]), int(lesson["id"]), message.text or "")
-        await message.answer(tr("correct", language) if result.get("is_correct") else tr("wrong", language))
-        next_index = int(resume["exercise_index"]) + 1 if result.get("is_correct") else int(resume["exercise_index"])
-        await send_current_lesson_step(message, lesson, next_index, state, telegram_id, language)
+        next_index = current_index + 1
+        await show_lesson_result(
+            message,
+            state,
+            lesson,
+            current_index,
+            next_index,
+            language,
+            result,
+        )
     except Exception:
         LOGGER.exception("Failed to submit text answer")
         await send_error_message(message, language, "lesson", route="learn")
@@ -1175,7 +1443,7 @@ async def cmd_review(message: Message, state: FSMContext) -> None:
     await pause_text_input(state)
     language = await user_language(telegram_id)
     try:
-        await send_review_queue(message, telegram_id, "due", language)
+        await send_review_queue(message, state, telegram_id, "due", language)
     except Exception:
         LOGGER.exception("Failed to open review queue")
         await send_error_message(message, language, "review", route="review")
@@ -1186,26 +1454,48 @@ async def cmd_mistakes(message: Message, state: FSMContext) -> None:
     await pause_text_input(state)
     language = await user_language(telegram_id)
     try:
-        await send_review_queue(message, telegram_id, "mistakes", language)
+        await send_review_queue(message, state, telegram_id, "mistakes", language)
     except Exception:
         LOGGER.exception("Failed to open mistake queue")
         await send_error_message(message, language, "mistakes", route="review")
 
 
-async def on_review(callback: CallbackQuery) -> None:
+async def on_review(callback: CallbackQuery, state: FSMContext) -> None:
     language = await user_language(callback.from_user.id)
     try:
         _, _, queue_kind, item_id_raw, quality_raw = callback.data.split(":")
         quality = int(quality_raw)
         result = await api.submit_review(callback.from_user.id, int(item_id_raw), quality >= 3, quality)
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer(tr("review_saved", language, interval=format_interval(language, result["interval_days"])))
-        await send_review_queue(callback.message, callback.from_user.id, queue_kind, language)
+        await show_review_result(
+            callback.message,
+            state,
+            queue_kind,
+            language,
+            tr("review_saved", language, interval=format_interval(language, result["interval_days"])),
+        )
         await callback.answer()
     except Exception:
         LOGGER.exception("Failed to submit review")
         await callback.answer(tr("generic_error", language), show_alert=True)
         await send_error_message(callback.message, language, "review", route="review")
+
+
+async def on_review_result(callback: CallbackQuery, state: FSMContext) -> None:
+    language = await user_language(callback.from_user.id)
+    try:
+        _, _, queue_kind, _ = callback.data.split(":")
+        await send_review_queue(
+            callback.message,
+            state,
+            callback.from_user.id,
+            queue_kind,
+            language,
+            empty_key="mistakes_done" if queue_kind == "mistakes" else "review_done",
+        )
+        await callback.answer()
+    except Exception:
+        LOGGER.exception("Failed to continue review after result")
+        await callback.answer(tr("generic_error", language), show_alert=True)
 
 
 async def cmd_grammar(message: Message, state: FSMContext) -> None:
@@ -1270,7 +1560,7 @@ async def cmd_quiz(message: Message, state: FSMContext) -> None:
         try:
             session = await build_quiz_session(telegram_id, language)
             if not session:
-                await message.answer(tr("quiz_empty", language), reply_markup=no_content_keyboard(language, route="learn"))
+                await render_practice_message(message, state, tr("quiz_empty", language), reply_markup=no_content_keyboard(language, route="learn"))
                 return
             await remember_quiz_session(state, session)
         except Exception:
@@ -1303,15 +1593,31 @@ async def on_quiz_answer(callback: CallbackQuery, state: FSMContext) -> None:
             int(item.get("lesson_id") or 0),
             option.get("value"),
         )
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer(tr("correct", language) if result.get("is_correct") else tr("wrong", language))
-        if result.get("is_correct"):
-            await move_quiz_forward(callback.message, state, language)
-        else:
-            await send_quiz_item(callback.message, state, callback.from_user.id, language)
+        await show_quiz_result(
+            callback.message,
+            state,
+            item,
+            index,
+            len(session.get("items") or []),
+            language,
+            tr("correct", language) if result.get("is_correct") else tr("incorrect_short", language),
+            explanation=explanation_line(result.get("explanation"), language) if not result.get("is_correct") else None,
+            note=tr("review_later_short", language) if not result.get("is_correct") else None,
+            later=not result.get("is_correct"),
+        )
         await callback.answer()
     except Exception:
         LOGGER.exception("Failed to submit quiz answer")
+        await callback.answer(tr("generic_error", language), show_alert=True)
+
+
+async def on_quiz_result(callback: CallbackQuery, state: FSMContext) -> None:
+    language = await user_language(callback.from_user.id)
+    try:
+        await send_quiz_item(callback.message, state, callback.from_user.id, language)
+        await callback.answer()
+    except Exception:
+        LOGGER.exception("Failed to continue quiz after result")
         await callback.answer(tr("generic_error", language), show_alert=True)
 
 
@@ -1324,9 +1630,16 @@ async def on_quiz_review(callback: CallbackQuery, state: FSMContext) -> None:
             await callback.answer(tr("quiz_empty", language), show_alert=True)
             return
         item = (session.get("items") or [])[int(session.get("index", 0))]
-        await api.submit_review(callback.from_user.id, int(item["review_item_id"]), quality >= 3, quality)
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await move_quiz_forward(callback.message, state, language)
+        result = await api.submit_review(callback.from_user.id, int(item["review_item_id"]), quality >= 3, quality)
+        await show_quiz_result(
+            callback.message,
+            state,
+            item,
+            int(session.get("index", 0)),
+            len(session.get("items") or []),
+            language,
+            tr("review_saved", language, interval=format_interval(language, result["interval_days"])),
+        )
         await callback.answer()
     except Exception:
         LOGGER.exception("Failed to submit quiz review")
@@ -1341,9 +1654,19 @@ async def on_quiz_scenario(callback: CallbackQuery, state: FSMContext) -> None:
             await callback.answer(tr("quiz_empty", language), show_alert=True)
             return
         item = (session.get("items") or [])[int(session.get("index", 0))]
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer(tr("quiz_show_answer", language, answer=item.get("answer", "")))
-        await move_quiz_forward(callback.message, state, language)
+        action = callback.data.split(":")[-1]
+        if action not in {"knew", "show"}:
+            await callback.answer(tr("generic_error", language), show_alert=True)
+            return
+        await show_quiz_result(
+            callback.message,
+            state,
+            item,
+            int(session.get("index", 0)),
+            len(session.get("items") or []),
+            language,
+            tr("quiz_show_answer", language, answer=item.get("answer", "")) if action == "show" else tr("correct", language),
+        )
         await callback.answer()
     except Exception:
         LOGGER.exception("Failed to handle scenario quiz item")
@@ -1378,25 +1701,6 @@ async def cmd_plan(message: Message) -> None:
     except Exception:
         LOGGER.exception("Failed to load curriculum map")
         await send_error_message(message, language, "progress")
-
-
-async def cmd_streak(message: Message, state: FSMContext) -> None:
-    telegram_id = chat_user_id(message)
-    await pause_text_input(state)
-    language = await user_language(telegram_id)
-    try:
-        summary = await api.streak(telegram_id)
-        await message.answer(
-            streak_message(summary, language),
-            reply_markup=content_actions_keyboard(
-                [(button("lesson", language), "nav:lesson"), (button("review", language), "nav:review")],
-                web_route="home",
-                web_label=button("open_app", language),
-            ),
-        )
-    except Exception:
-        LOGGER.exception("Failed to load streak")
-        await send_error_message(message, language, "streak")
 
 
 async def cmd_settings(message: Message, state: FSMContext) -> None:
@@ -1483,8 +1787,8 @@ async def cmd_help(message: Message, state: FSMContext) -> None:
     await message.answer(
         "\n".join(lines),
         reply_markup=content_actions_keyboard(
-            [(button("menu", language), "nav:menu"), (button("settings", language), "nav:settings")],
-            web_route="home",
+            [(button("menu", language), "nav:menu"), (button("words", language), "nav:words")],
+            web_route="vocab",
             web_label=button("open_app", language),
         ),
     )
@@ -1512,12 +1816,9 @@ async def cmd_preview_lesson(message: Message) -> None:
         return
     try:
         lesson = await fetch_lesson(telegram_id, int(parts[1]))
-        title = localize(lesson.get("title"), language, "Lesson")
+        title = localize(lesson.get("title"), language, tr("lesson_heading", language))
         summary = localize(lesson.get("summary"), language)
-        await message.answer(
-            f"{title}\n\n{shorten(summary, 220)}".strip(),
-            reply_markup=share_link_keyboard(button("open_lesson", language), "learn", lesson=str(lesson["id"])),
-        )
+        await message.answer(f"{title}\n\n{shorten(summary, 220)}".strip())
     except Exception:
         LOGGER.exception("Failed to preview lesson")
         await send_error_message(message, language, "lesson", route="learn")
@@ -1532,29 +1833,18 @@ async def cmd_preview_scenario(message: Message) -> None:
         return
     try:
         detail = await api.scenario_detail(telegram_id, parts[1])
-        await message.answer(
-            dialogue_preview_message(language, [], detail),
-            reply_markup=share_link_keyboard(button("open_dialogue", language), "scenarios", scenario=str(detail["slug"])),
-        )
+        await message.answer(dialogue_preview_message(language, [], detail))
     except Exception:
         LOGGER.exception("Failed to preview scenario")
         await send_error_message(message, language, "dialogue", route="scenarios")
 
 
 async def cmd_share_lesson(message: Message) -> None:
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) < 2 or not parts[1].isdigit():
-        await message.answer("Usage: /share_lesson <lesson_id>")
-        return
-    await message.answer(webapp_url("learn", lesson=parts[1]), reply_markup=share_link_keyboard("Open lesson", "learn", lesson=parts[1]))
+    await message.answer("Sharing links is unavailable. The web app has been removed.")
 
 
 async def cmd_share_scenario(message: Message) -> None:
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer("Usage: /share_scenario <scenario_id_or_slug>")
-        return
-    await message.answer(webapp_url("scenarios", scenario=parts[1]), reply_markup=share_link_keyboard("Open scenario", "scenarios", scenario=parts[1]))
+    await message.answer("Sharing links is unavailable. The web app has been removed.")
 
 
 async def on_error(event: ErrorEvent) -> bool:
@@ -1564,7 +1854,6 @@ async def on_error(event: ErrorEvent) -> bool:
 
 async def configure_bot(bot: Bot) -> None:
     scope = BotCommandScopeAllPrivateChats()
-    await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text=button("app", "en"), web_app=WebAppInfo(url=webapp_url("home"))))
     await bot.set_my_commands([BotCommand(command=name, description=description) for name, description in command_descriptions("en")], scope=scope)
     for language in ("ru", "uz"):
         await bot.set_my_commands(
@@ -1578,39 +1867,14 @@ def register(dp: Dispatcher) -> None:
     dp.message.register(cmd_start, CommandStart())
     dp.message.register(cmd_admin, Command("admin"))
     dp.message.register(cmd_menu, Command("menu"))
-    dp.message.register(cmd_lesson, Command("lesson"))
-    dp.message.register(cmd_dialogue, Command("dialogue"))
-    dp.message.register(cmd_preview_lesson, Command("preview_lesson"))
-    dp.message.register(cmd_preview_scenario, Command("preview_scenario"))
-    dp.message.register(cmd_share_lesson, Command("share_lesson"))
-    dp.message.register(cmd_share_scenario, Command("share_scenario"))
-    dp.message.register(cmd_quiz, Command("quiz"))
-    dp.message.register(cmd_plan, Command("plan"))
-    dp.message.register(cmd_streak, Command("streak"))
-    dp.message.register(cmd_review, Command("review"))
-    dp.message.register(cmd_mistakes, Command("mistakes"))
-    dp.message.register(cmd_grammar, Command("grammar"))
     dp.message.register(cmd_words, Command("words"))
-    dp.message.register(cmd_progress, Command("progress"))
     dp.message.register(cmd_help, Command("help"))
-    dp.message.register(cmd_settings, Command("settings"))
-    dp.message.register(on_text_answer, LessonFlow.answering_text)
     dp.message.register(on_reply_navigation, F.text)
     dp.callback_query.register(on_language, F.data.startswith("onboarding:lang:"))
     dp.callback_query.register(on_level, F.data.startswith("onboarding:level:"))
     dp.callback_query.register(on_time, F.data.startswith("onboarding:time:"))
     dp.callback_query.register(on_style, F.data.startswith("onboarding:style:"))
     dp.callback_query.register(on_nav, F.data.startswith("nav:"))
-    dp.callback_query.register(on_lesson_answer, F.data.startswith("lesson:answer:"))
-    dp.callback_query.register(on_review, F.data.startswith("review:submit:"))
-    dp.callback_query.register(on_dialogue_topic, F.data.startswith("dialogue:topic:"))
-    dp.callback_query.register(on_quiz_answer, F.data.startswith("quiz:answer:"))
-    dp.callback_query.register(on_quiz_review, F.data.startswith("quiz:review:"))
-    dp.callback_query.register(on_quiz_scenario, F.data.startswith("quiz:scenario:"))
-    dp.callback_query.register(on_settings_menu, F.data.startswith("settings:menu:"))
-    dp.callback_query.register(on_settings_toggle, F.data == "settings:toggle:reminders")
-    dp.callback_query.register(on_settings_set, F.data.startswith("settings:set:"))
-    dp.callback_query.register(on_settings_back, F.data == "settings:back")
     dp.errors.register(on_error)
 
 

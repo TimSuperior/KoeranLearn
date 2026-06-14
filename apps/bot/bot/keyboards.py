@@ -1,83 +1,16 @@
-import os
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from bot.texts import button, difficulty_label, style_choices, time_choices, topic_label, tr
-
-
-def webapp_url(route: str | None = None, **params: str) -> str:
-    current = os.getenv("TELEGRAM_WEBAPP_URL", "http://localhost:5173")
-    parts = urlsplit(current)
-    query = dict(parse_qsl(parts.query, keep_blank_values=True))
-    if route:
-        query["screen"] = route
-    for key, value in params.items():
-        if value:
-            query[key] = value
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
-
-
-def startapp_url(start_param: str, mode: str = "fullscreen") -> str | None:
-    bot_username = os.getenv("TELEGRAM_BOT_USERNAME", "").strip()
-    short_name = os.getenv("TELEGRAM_MINI_APP_SHORT_NAME", "").strip()
-    if not bot_username:
-        return None
-    base = f"https://t.me/{bot_username}/{short_name}" if short_name else f"https://t.me/{bot_username}"
-    query = {"startapp": start_param}
-    if mode != "normal":
-        query["mode"] = mode
-    return f"{base}?{urlencode(query)}"
-
-
-def route_start_param(route: str, **params: str) -> str:
-    if route in {"learn", "lesson"} and params.get("lesson"):
-        return f"lesson_{params['lesson']}"
-    if route == "scenarios" and params.get("scenario"):
-        return f"scenario_{params['scenario']}"
-    if route == "library" and params.get("grammar"):
-        return f"grammar_{params['grammar']}"
-    if route == "library" and params.get("word"):
-        return f"word_{params['word']}"
-    if route == "review" and params.get("mode") == "mistakes":
-        return "review_mistakes"
-    if route == "review" and params.get("mode") == "grammar":
-        return "review_grammar"
-    if route == "review" and params.get("mode") == "listening":
-        return "review_listening"
-    if route == "review" and params.get("mode") == "vocab":
-        return "review_vocab"
-    if route == "review":
-        return "review_due"
-    if route == "settings":
-        return "settings"
-    if route == "progress":
-        return "progress"
-    if route == "scenarios":
-        return "dialogue"
-    if route == "library" and params.get("tab") == "grammar":
-        return "grammar"
-    if route == "library":
-        return "vocab"
-    if route == "admin":
-        return "admin"
-    return "screen_home"
 
 
 def main_reply_keyboard(language: str) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=button("lesson", language)), KeyboardButton(text=button("review", language))],
-            [KeyboardButton(text=button("dialogue", language)), KeyboardButton(text=button("library", language))],
-            [KeyboardButton(text=button("quiz", language)), KeyboardButton(text=button("progress", language))],
-            [KeyboardButton(text=button("streak", language)), KeyboardButton(text=button("settings", language))],
-            [
-                KeyboardButton(text=button("help", language)),
-                KeyboardButton(text=button("app", language), web_app=WebAppInfo(url=webapp_url("home"))),
-            ],
+            [KeyboardButton(text=button("words", language))],
         ],
+        is_persistent=True,
         resize_keyboard=True,
-        input_field_placeholder=tr("menu_title", language),
+        input_field_placeholder=tr("words_title", language),
     )
 
 
@@ -113,6 +46,9 @@ def content_actions_keyboard(
     web_label: str | None = None,
     web_params: dict[str, str] | None = None,
 ) -> InlineKeyboardMarkup:
+    del web_route
+    del web_label
+    del web_params
     rows: list[list[InlineKeyboardButton]] = []
     if callbacks:
         row: list[InlineKeyboardButton] = []
@@ -123,52 +59,41 @@ def content_actions_keyboard(
                 row = []
         if row:
             rows.append(row)
-    if web_route or web_label:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=web_label or "Mini App",
-                    web_app=WebAppInfo(url=webapp_url(web_route, **(web_params or {}))),
-                )
-            ]
-        )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def mini_app_keyboard(route: str | None = None, label: str | None = None, **params: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=label or "Mini App", web_app=WebAppInfo(url=webapp_url(route, **params)))],
-        ]
-    )
+def option_button_text(option: dict, language: str) -> str:
+    label = option.get("label", {}).get(language) or option.get("label", {}).get("en") or option.get("value", "")
+    return " ".join(str(label).split())
 
 
-def admin_mini_app_keyboard(language: str) -> InlineKeyboardMarkup:
-    return mini_app_keyboard("admin", button("admin", language))
-
-
-def share_link_keyboard(label: str, route: str, **params: str) -> InlineKeyboardMarkup:
-    deep_link = startapp_url(route_start_param(route, **params))
-    if deep_link:
-        return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=label, url=deep_link)]])
-    return mini_app_keyboard(route, label, **params)
+def should_use_two_columns(labels: list[str]) -> bool:
+    if not 1 < len(labels) <= 4:
+        return False
+    return all(label and len(label) <= 18 and "\n" not in label for label in labels)
 
 
 def lesson_exercise_keyboard(exercise: dict, language: str, namespace: str = "lesson") -> InlineKeyboardMarkup | None:
     options = sorted(exercise.get("options") or [], key=lambda item: item.get("order_index", 0))
     if not options:
         return None
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=option.get("label", {}).get(language) or option.get("label", {}).get("en") or option.get("value", ""),
-                    callback_data=f"{namespace}:answer:{exercise['id']}:{index}",
-                )
-            ]
-            for index, option in enumerate(options)
-        ]
-    )
+    labels = [option_button_text(option, language) for option in options]
+    columns = 2 if should_use_two_columns(labels) else 1
+    rows: list[list[InlineKeyboardButton]] = []
+    current_row: list[InlineKeyboardButton] = []
+    for index, option in enumerate(options):
+        current_row.append(
+            InlineKeyboardButton(
+                text=labels[index],
+                callback_data=f"{namespace}:answer:{exercise['id']}:{index}",
+            )
+        )
+        if len(current_row) == columns:
+            rows.append(current_row)
+            current_row = []
+    if current_row:
+        rows.append(current_row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def review_keyboard(review_item_id: int, queue_kind: str, language: str) -> InlineKeyboardMarkup:
@@ -176,9 +101,23 @@ def review_keyboard(review_item_id: int, queue_kind: str, language: str) -> Inli
         [
             (button("knew", language), f"review:submit:{queue_kind}:{review_item_id}:4"),
             (button("missed", language), f"review:submit:{queue_kind}:{review_item_id}:1"),
-        ],
-        web_route="review",
-        web_label=button("open_review", language),
+        ]
+    )
+
+
+def result_action_keyboard(prefix: str, language: str, *, later: bool = False) -> InlineKeyboardMarkup:
+    callbacks = [(tr("label_next", language), f"{prefix}:next")]
+    if later:
+        callbacks = [(tr("action_later", language), f"{prefix}:later")]
+    return content_actions_keyboard(callbacks)
+
+
+def lesson_result_keyboard(prefix: str, language: str) -> InlineKeyboardMarkup:
+    return content_actions_keyboard(
+        [
+            (tr("label_next", language), f"{prefix}:next"),
+            (tr("action_later", language), f"{prefix}:later"),
+        ]
     )
 
 

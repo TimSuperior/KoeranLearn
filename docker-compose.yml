@@ -67,20 +67,6 @@ services:
         condition: service_healthy
     command: python -m bot.main
 
-  web:
-    build:
-      context: ./apps/web
-      target: dev
-    env_file: .env
-    environment:
-      VITE_API_PROXY_TARGET: http://api:8000
-    ports:
-      - "5173:5173"
-    command: npm run dev -- --host 0.0.0.0
-    depends_on:
-      api:
-        condition: service_healthy
-
   backup:
     image: postgres:16-alpine
     profiles: ["ops"]

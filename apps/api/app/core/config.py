@@ -14,7 +14,6 @@ class Settings(BaseSettings):
     admin_password: str = "change-me"
     internal_service_token: str = "dev-internal-token"
     telegram_bot_token: str = ""
-    telegram_webapp_url: str = "http://localhost:5173"
     media_dir: str = "./media"
     private_audio_dir: str = "./media-private/audio"
     audio_storage_backend: str = "local"

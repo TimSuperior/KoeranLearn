@@ -49,9 +49,9 @@ TEXT = {
         "en": "A short quiz is still open.",
     },
     "menu_hint": {
-        "ru": "Кнопка Menu и кнопка Mini App ниже открывают полную версию.",
-        "uz": "Menu tugmasi va pastdagi Mini App tugmasi to'liq ilovani ochadi.",
-        "en": "The Menu button and the Mini App button open the full app.",
+        "ru": "Кнопка Menu и кнопка Bot ниже открывают полную версию.",
+        "uz": "Menu tugmasi va pastdagi Bot tugmasi to'liq ilovani ochadi.",
+        "en": "The Menu button and the Bot button open the full app.",
     },
     "lesson_heading": {
         "ru": "Урок",
@@ -93,6 +93,21 @@ TEXT = {
         "uz": "Hali emas. Bu element keyin takrorlanadi.",
         "en": "Not quite. This item will come back in review.",
     },
+    "incorrect_short": {
+        "ru": "\u041d\u0435\u0432\u0435\u0440\u043d\u043e.",
+        "uz": "Noto'g'ri.",
+        "en": "Incorrect.",
+    },
+    "review_later_short": {
+        "ru": "\u0412\u0435\u0440\u043d\u0451\u0442\u0441\u044f \u0432 \u043f\u043e\u0432\u0442\u043e\u0440.",
+        "uz": "Keyin takrorlanadi.",
+        "en": "It will return in review.",
+    },
+    "action_later": {
+        "ru": "\u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u044c \u043f\u043e\u0437\u0436\u0435",
+        "uz": "Keyinroq takrorlash",
+        "en": "Review later",
+    },
     "no_lesson": {
         "ru": "Сейчас нет доступного урока.",
         "uz": "Hozircha ochiq dars yo'q.",
@@ -112,6 +127,16 @@ TEXT = {
         "ru": "Следующий интервал: {interval}.",
         "uz": "Keyingi interval: {interval}.",
         "en": "Next interval: {interval}.",
+    },
+    "remaining_count_broken": {
+        "ru": "Ð¾ÑÑ‚Ð°Ð»Ð¾ÑÑŒ {count}",
+        "uz": "{count} qoldi",
+        "en": "{count} left",
+    },
+    "remaining_count": {
+        "ru": "\u043e\u0441\u0442\u0430\u043b\u043e\u0441\u044c {count}",
+        "uz": "{count} qoldi",
+        "en": "{count} left",
     },
     "review_done": {
         "ru": "Быстрый повтор закрыт.",
@@ -152,6 +177,16 @@ TEXT = {
         "ru": "Сценарии по этой теме пока не готовы.",
         "uz": "Bu mavzu uchun ssenariylar hozircha tayyor emas.",
         "en": "No scenarios are ready for this topic yet.",
+    },
+    "dialogue_intro": {
+        "ru": "Выберите тему или откройте подборку в Bot.",
+        "uz": "Mavzuni tanlang yoki Botda to'liq ro'yxatni oching.",
+        "en": "Pick a topic or open the full list in the Bot.",
+    },
+    "dialogue_locked_chat": {
+        "ru": "Аудио в чате недоступно. Откройте Bot для полного сценария.",
+        "uz": "Chat ichida audio mavjud emas. To'liq ssenariy uchun Botni oching.",
+        "en": "Audio is unavailable in chat. Open the Bot for the full scenario flow.",
     },
     "quiz_title": {
         "ru": "Короткий квиз",
@@ -219,14 +254,19 @@ TEXT = {
         "en": "Commands",
     },
     "help_hint": {
-        "ru": "Mini App удобнее для длинных уроков, деталей слов и сценариев.",
-        "uz": "Uzoq darslar, so'z tafsilotlari va ssenariylar uchun Mini App qulayroq.",
-        "en": "The Mini App is better for long lessons, word details, and scenario playback.",
+        "ru": "Bot удобнее для длинных уроков, деталей слов и сценариев.",
+        "uz": "Uzoq darslar, so'z tafsilotlari va ssenariylar uchun Bot qulayroq.",
+        "en": "The Bot is better for long lessons, word details, and scenario playback.",
     },
     "curriculum_title": {
         "ru": "Карта маршрута",
         "uz": "Yo'l xaritasi",
         "en": "Curriculum map",
+    },
+    "curriculum_default_title": {
+        "ru": "Корейский с нуля",
+        "uz": "Koreys tili noldan",
+        "en": "Korean from zero",
     },
     "generic_error": {
         "ru": "Не удалось загрузить данные. Попробуйте ещё раз.",
@@ -252,6 +292,11 @@ TEXT = {
         "ru": "К сроку",
         "uz": "Navbatda",
         "en": "Due",
+    },
+    "label_due_target": {
+        "ru": "Срок цели",
+        "uz": "Maqsad muddati",
+        "en": "Due target",
     },
     "label_module": {
         "ru": "Модуль",
@@ -311,6 +356,22 @@ TEXT = {
 }
 
 
+TEXT.update(
+    {
+        "menu_subtitle": {
+            "ru": "Учёба, повтор, диалоги, слова и грамматика в одной клавиатуре.",
+            "uz": "O'rganish, takror, dialoglar, so'zlar va grammatika bitta klaviaturada.",
+            "en": "Learn, review, dialogues, words, and grammar from one keyboard.",
+        },
+        "menu_hint": {
+            "ru": "Кнопка Menu открывает полную версию.",
+            "uz": "Menu tugmasi to'liq ilovani ochadi.",
+            "en": "The Menu button opens the full app.",
+        },
+    }
+)
+
+
 BUTTONS = {
     "lesson": {"ru": "Урок", "uz": "Dars", "en": "Lesson"},
     "review": {"ru": "Повтор", "uz": "Takror", "en": "Review"},
@@ -322,11 +383,11 @@ BUTTONS = {
     "settings": {"ru": "Настройки", "uz": "Sozlamalar", "en": "Settings"},
     "help": {"ru": "Помощь", "uz": "Yordam", "en": "Help"},
     "menu": {"ru": "Меню", "uz": "Menyu", "en": "Menu"},
-    "app": {"ru": "Mini App", "uz": "Mini App", "en": "Mini App"},
+    "app": {"ru": "Bot", "uz": "Bot", "en": "Bot"},
     "resume": {"ru": "Продолжить", "uz": "Davom etish", "en": "Continue"},
     "quick_review": {"ru": "Быстрый повтор", "uz": "Tezkor takror", "en": "Quick review"},
     "mistakes": {"ru": "Ошибки", "uz": "Xatolar", "en": "Mistakes"},
-    "open_app": {"ru": "Открыть Mini App", "uz": "Mini App ochish", "en": "Open Mini App"},
+    "open_app": {"ru": "Открыть Bot", "uz": "Bot ochish", "en": "Open Bot"},
     "open_lesson": {"ru": "Открыть урок", "uz": "Darsni ochish", "en": "Open lesson"},
     "open_review": {"ru": "Открыть повтор", "uz": "Takrorni ochish", "en": "Open review"},
     "open_dialogue": {"ru": "Открыть сценарий", "uz": "Ssenariyni ochish", "en": "Open scenario"},
@@ -347,8 +408,18 @@ BUTTONS = {
     "style": {"ru": "Стиль", "uz": "Uslub", "en": "Style"},
     "difficulty": {"ru": "Сложность", "uz": "Qiyinlik", "en": "Difficulty"},
     "save": {"ru": "Сохранить", "uz": "Saqlash", "en": "Save"},
-    "admin": {"ru": "Admin Mini App", "uz": "Admin Mini App", "en": "Admin Mini App"},
+    "admin": {"ru": "Admin Bot", "uz": "Admin Bot", "en": "Admin Bot"},
 }
+
+
+BUTTONS.update(
+    {
+        "learn": {"ru": "Учить", "uz": "O'rganish", "en": "Learn"},
+        "dialogues": {"ru": "Диалоги", "uz": "Dialoglar", "en": "Dialogues"},
+        "words": {"ru": "Слова", "uz": "So'zlar", "en": "Words"},
+        "grammar": {"ru": "Грамматика", "uz": "Grammatika", "en": "Grammar"},
+    }
+)
 
 
 TOPICS = {
@@ -410,13 +481,57 @@ COMMANDS = {
     "dialogue": {"ru": "сценарии и диалоги", "uz": "ssenariy va dialoglar", "en": "scenario practice"},
     "quiz": {"ru": "короткая смешанная практика", "uz": "qisqa aralash mashq", "en": "short mixed practice"},
     "progress": {"ru": "общий прогресс", "uz": "umumiy progress", "en": "overall progress"},
-    "streak": {"ru": "серия и XP", "uz": "seriya va XP", "en": "streak and XP"},
     "settings": {"ru": "полезные настройки", "uz": "foydali sozlamalar", "en": "useful settings"},
     "help": {"ru": "список команд", "uz": "buyruqlar ro'yxati", "en": "command list"},
 }
 
 
-TOP_LEVEL_ACTIONS = ("lesson", "review", "dialogue", "library", "quiz", "progress", "streak", "settings", "help", "app")
+REPLY_BUTTON_ACTIONS = {
+    "lesson": "lesson",
+    "learn": "lesson",
+    "review": "review",
+    "dialogue": "dialogue",
+    "dialogues": "dialogue",
+    "words": "words",
+    "grammar": "grammar",
+    "library": "library",
+    "quiz": "quiz",
+    "progress": "progress",
+    "settings": "settings",
+    "help": "help",
+    "app": "app",
+}
+
+
+TEXT.update(
+    {
+        "menu_subtitle": {
+            "ru": "\u0421\u0435\u0439\u0447\u0430\u0441 \u0444\u043e\u043a\u0443\u0441 \u0442\u043e\u043b\u044c\u043a\u043e \u043d\u0430 \u0441\u043b\u043e\u0432\u0430\u0445 \u0438 \u0438\u0445 \u0437\u0430\u043f\u043e\u043c\u0438\u043d\u0430\u043d\u0438\u0438.",
+            "uz": "Hozircha faqat so'zlar va ularni yodlashga e'tibor qaratilgan.",
+            "en": "Everything is focused on vocabulary for now.",
+        },
+        "menu_hint": {
+            "ru": "\u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439\u0442\u0435 /words \u0438 \u043c\u0435\u043d\u044e, \u0447\u0442\u043e\u0431\u044b \u0434\u0435\u0440\u0436\u0430\u0442\u044c \u0444\u043e\u043a\u0443\u0441 \u0442\u043e\u043b\u044c\u043a\u043e \u043d\u0430 \u0441\u043b\u043e\u0432\u0430\u0445.",
+            "uz": "/words va menyudan foydalanib, diqqatni faqat so'zlarga qarating.",
+            "en": "Use /words and the menu to keep the focus on vocabulary only.",
+        },
+        "dialogue_intro": {
+            "ru": "\u0412 \u0447\u0430\u0442\u0435 \u0441\u0435\u0439\u0447\u0430\u0441 \u0430\u043a\u0442\u0438\u0432\u0435\u043d \u0442\u043e\u043b\u044c\u043a\u043e \u0440\u0435\u0436\u0438\u043c \u0441\u043b\u043e\u0432.",
+            "uz": "Chat ichida hozircha faqat so'zlar rejimi faol.",
+            "en": "Only vocabulary mode is active in chat right now.",
+        },
+        "dialogue_locked_chat": {
+            "ru": "\u0412\u0435\u0431-\u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441 \u0443\u0434\u0430\u043b\u0451\u043d. \u0414\u043e\u0441\u0442\u0443\u043f\u0435\u043d \u0442\u043e\u043b\u044c\u043a\u043e \u0431\u043e\u0442.",
+            "uz": "Veb interfeys olib tashlangan. Faqat bot mavjud.",
+            "en": "The web interface was removed. Bot-only mode is available.",
+        },
+        "help_hint": {
+            "ru": "\u0412 \u044d\u0442\u043e\u0439 \u0441\u0431\u043e\u0440\u043a\u0435 \u043e\u0441\u0442\u0430\u043b\u0438\u0441\u044c \u0442\u043e\u043b\u044c\u043a\u043e \u0431\u043e\u0442 \u0438 API.",
+            "uz": "Bu yig'ilishda faqat bot va API qoldirilgan.",
+            "en": "This build keeps only the bot and API.",
+        },
+    }
+)
 
 
 def cache_bundle(language: str, bundle: dict[str, str]) -> None:
@@ -482,7 +597,7 @@ def style_label(value: str, language: str | None = "en") -> str:
 
 def command_descriptions(language: str | None = "en") -> list[tuple[str, str]]:
     lang = normalize_language(language)
-    ordered = ("start", "menu", "lesson", "review", "mistakes", "grammar", "words", "dialogue", "quiz", "progress", "streak", "settings", "help")
+    ordered = ("start", "menu", "words", "help")
     return [(name, COMMANDS[name][lang]) for name in ordered]
 
 
@@ -490,8 +605,8 @@ def action_from_label(value: str | None) -> str | None:
     if not value:
         return None
     normalized = value.strip().lower()
-    for action in TOP_LEVEL_ACTIONS:
-        labels = {BUTTONS[action][language].lower() for language in SUPPORTED_LANGUAGES}
+    for key, action in REPLY_BUTTON_ACTIONS.items():
+        labels = {BUTTONS[key][language].lower() for language in SUPPORTED_LANGUAGES}
         if normalized in labels:
             return action
     return None

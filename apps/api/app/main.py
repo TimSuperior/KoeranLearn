@@ -24,13 +24,13 @@ if settings.sentry_dsn:
 app = FastAPI(
     title="KoreanLearn Telegram Platform API",
     version="0.1.0",
-    description="Curriculum-based Korean learning API for Telegram Bot and Telegram Mini App.",
+    description="Curriculum-based Korean learning API for the Telegram bot.",
 )
 
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.app_env == "local" else [settings.telegram_webapp_url],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

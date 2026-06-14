@@ -112,11 +112,6 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
-    async def streak(self, telegram_id: int | str) -> dict:
-        response = await self.client.get("/api/streak", headers=self._headers(telegram_id))
-        response.raise_for_status()
-        return response.json()
-
     async def scenarios(self, telegram_id: int | str, topic: str | None = None) -> list[dict]:
         response = await self.client.get("/api/scenarios", params={"topic": topic} if topic else {}, headers=self._headers(telegram_id))
         response.raise_for_status()

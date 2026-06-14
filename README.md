@@ -6,8 +6,7 @@ This starter monorepo includes:
 
 - FastAPI backend API with SQLAlchemy models, seed content, onboarding, lessons, reviews, writing correction fallback, premium checks, reminders, analytics, and admin endpoints.
 - Aiogram Telegram bot for short lesson/review flows.
-- React + TypeScript + Vite Telegram Mini App with dashboard, paths, review, grammar/vocab, writing correction, premium, settings, and admin starter screens.
-- Docker Compose setup for API, bot, web, PostgreSQL, Redis, and reminder worker.
+- Docker Compose setup for API, bot, PostgreSQL, Redis, and reminder worker.
 - Product/architecture documentation in `docs/ARCHITECTURE.md`.
 
 ## Quick Start
@@ -22,7 +21,6 @@ cp .env.example .env
 
 ```bash
 TELEGRAM_BOT_TOKEN=123456:replace-me
-TELEGRAM_WEBAPP_URL=https://your-mini-app-url.example
 BOT_ADMIN_TELEGRAM_IDS=123456789
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=change-me
@@ -38,16 +36,7 @@ docker compose up --build
 4. Open:
 
 - API: http://localhost:8000/docs
-- Mini App web: http://localhost:5173
 - Health: http://localhost:8000/health
-
-For local frontend development outside Docker:
-
-```bash
-cd apps/web
-npm install
-npm run dev
-```
 
 For local backend development outside Docker:
 
@@ -72,7 +61,7 @@ The demo path supports:
 - Text-only writing correction with deterministic checks and AI-ready interface.
 - Premium access locking through backend entitlement checks.
 - Reminder records and a worker loop that can send Telegram reminders if a bot token is configured.
-- Role-based admin CMS APIs and Mini App admin login.
+- Role-based admin CMS APIs.
 - Phase A/B upgrade notes in `docs/PHASE_A_B_IMPLEMENTATION.md`.
 - Phase C content operations notes in `docs/PHASE_C_IMPLEMENTATION.md`.
 - Backup and restore runbook in `docs/BACKUP.md`.
@@ -101,5 +90,3 @@ INTERNAL_SERVICE_TOKEN=replace-me
 ```
 
 The first admin login bootstraps an owner account when no `admin_users` exist.
-
-If you want the bot to expose the admin Mini App shortcut only for specific Telegram accounts, set `BOT_ADMIN_TELEGRAM_IDS` to a comma-separated list of Telegram user IDs.

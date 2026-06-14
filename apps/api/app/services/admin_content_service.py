@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1168,13 +1169,15 @@ def _exercise_has_audio_reference(row: Any | None, exercise_id: int | None) -> b
 
 
 def _entity_deep_link(entity: str, row: Any) -> str | None:
-    settings = get_settings()
+    bot_username = os.getenv("TELEGRAM_BOT_USERNAME", "").strip()
+    if not bot_username:
+        return None
     if entity == "lessons":
-        return f"{settings.telegram_webapp_url}?screen=learn&lesson={row.id}"
+        return f"https://t.me/{bot_username}?start=lesson_{row.id}"
     if entity == "scenarios":
-        return f"{settings.telegram_webapp_url}?screen=scenarios&scenario={row.slug}"
+        return f"https://t.me/{bot_username}?start=scenario_{row.slug}"
     if entity == "dialogues":
-        return f"{settings.telegram_webapp_url}?screen=scenarios&dialogue={row.id}"
+        return f"https://t.me/{bot_username}?start=dialogue_{row.id}"
     return None
 
 
